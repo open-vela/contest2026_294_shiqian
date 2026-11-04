@@ -2,6 +2,7 @@
 
 | 文档 | 说明 |
 |------|------|
+| [技术报告_VelaGaze_队伍视嵌.docx](技术报告_VelaGaze_队伍视嵌.docx) | **大赛技术报告（Word，含全部图片）。初赛内容 + 决赛阶段（至 2026-11-04）外设扩充与量化对比** |
 | [reproduce.md](reproduce.md) | **从零复现（本仓库唯一入口：入位 → 编译 → 烧录 → 验收）** |
 | [architecture.md](architecture.md) | 系统架构（三层 + 眼控数据流） |
 | [openvela-porting.md](openvela-porting.md) | STM32N647 openvela 移植记录（启动链/已解决坑/调试） |
