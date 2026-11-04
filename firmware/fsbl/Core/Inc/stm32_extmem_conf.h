@@ -81,7 +81,22 @@ enum {
 #define EXTMEM_LRUN_DESTINATION_INTERNAL
 #define EXTMEM_LRUN_DESTINATION_ADDRESS  0x34000400U
 #define EXTMEM_LRUN_SOURCE_ADDRESS       0x100000U   /* NuttX at NOR 0x70100000 */
-#define EXTMEM_LRUN_SOURCE_SIZE          0x100000U   /* up to 1 MiB image */
+
+/* 2026-11-03: raised from 0x100000 to 0x110000 (+64 KB).
+ *
+ * 1 MiB was only ever a round number matching the FSBL's own 1 MiB NOR slot;
+ * BOOT_GetApplicationSize() returns this constant verbatim without reading any
+ * header, so the app image was silently truncated at exactly 1 MiB and the
+ * raster build had 6.5 KB left.  The NOR is empty from 0x70200000 (pose994's
+ * old slot, unused by the eye+face build) up to the eye weights at
+ * 0x70400000, so growing into it disturbs nothing.
+ *
+ * The real ceiling is RAM, not NOR: the CPU window ends at 0x34200000 because
+ * AXISRAM3..6 (1.75 MB above it) is the NPU tensor pool.  With the initial MSP
+ * currently at 0x341f0788 that leaves 63608 bytes of growth, so 0x110000
+ * releases essentially all of what is available.
+ */
+#define EXTMEM_LRUN_SOURCE_SIZE          0x110000U   /* up to 1.0625 MiB image */
 
 /* USER CODE BEGIN PV */
 

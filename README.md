@@ -28,7 +28,74 @@ NPU 眼动五分类（64×128）→ LVGL 界面动作 → 外设控制 + 蜂鸣�
 
 获奖后适配代码将按大赛要求 PR 至上游 `vendor_st` 的 `dev-ai-contest-2026` 分支。
 
-## 当前状态（2026-09-20）
+---
+
+## 初赛 → 决赛新增总览（截止 2026-11-04）
+
+> 初赛（2026-09-20，提交点 `847430a`）交付的是**「从 0 到 1 的平台移植 + 端侧 AI 眼控 Demo」**。
+> 决赛阶段在此基础上继续补**外设适配密度**：新增一整套音视频外设栈，产品配置的设备节点从 **8 个涨到 17 个**。
+> 下表每一行都有板上实测依据；未验证的一律标注"未完成"，不写推测。
+
+### 一屏对比
+
+| 维度 | 初赛（2026-09-20） | 决赛（2026-11-04） | 增量 |
+|---|---|---|---|
+| **固件体积** | 948,064 B | **1,058,660 B** | **+110,596 B（+11.7%）** |
+| **设备节点**（产品配置 `eye` 实测） | 8 个 | **17 个** | **+9** |
+| **芯片层代码** `arch/arm/stm32n6/` | 99 文件 / 37,057 行 | 100 文件 / **40,782 行** | +3,725 行 |
+| **板级代码** `board/atk-dnn647/` | 11 文件 / 2,632 行 | 11 文件 / **4,100 行** | +1,468 行 |
+| **`eye_cam` 子命令** | 7 个 | **12 个** | +5 |
+| **uORB 框架** | 无 | `light` + `proximity` 两主题 | **从 0 到 1** |
+| **FSBL LRUN 窗口** | `0x100000` | `0x110000` | 为新固件扩容 |
+| **`_ebss`** | `0x341B45AC` | `0x341F69C8` | 内部 RAM 余量收窄但仍在界内 |
+| **对外文档**（`docs/` 下 md） | 19 篇 | **24 篇**（含 6 篇 ADR） | **+5** |
+
+### A. 初赛已完成（本次保持不变的部分）
+
+| # | 能力 | 交付内容 |
+|---|---|---|
+| 1 | **平台移植 Phase 0–3** | 芯片层 / 板级层从 0 适配、NSH 启动、`ostest` 通过 |
+| 2 | **自定义 FSBL Phase 4** | LRUN 载入 + RIF/RISAF 授权，固件落外部 NOR 并从 NOR 启动 |
+| 3 | **显示栈 Phase 5** | LTDC 800×480 RGB565 + LVGL 9.1，3×2 主页 + 6 个二级页 |
+| 4 | **摄像头 Phase 6** | DCMIPP + IMX335（MIPI CSI-2）实时预览、全帧 800×480 BMP 存 SD 卡 |
+| 5 | **NPU 双模型 Phase 7** | ATON 运行时；YuNet 256×416 人脸检测 + MobileNetV2 64×128 眼动五分类 |
+| 6 | **眼控应用 Phase 8** | 闭眼确认 / 左右看选择 / 二级页返回，保持时长 + 冷却 + 静息判决 |
+| 7 | **附加能力** | HyperRAM 32 MB、GT911 触摸 `/dev/input0`、蜂鸣器四音调、D-Cache 提速 45× |
+| 8 | **端侧 AI 指标** | 自采 991 张五分类：float **991/991**、int8 **990/991**；单帧 2.7 s → **60 ms** |
+| 9 | **配套** | `docs/` 下 19 篇文档（含 6 篇 ADR）、AI Coding 日志 14 会话 / 38,296 事件、离线自检脚本 |
+
+### B. 决赛阶段新增（2026-09-21 → 2026-11-04）
+
+| # | 类别 | 新增内容 | 状态 | 板上证据 |
+|---|---|---|---|---|
+| 1 | **音频** | **喇叭全链路**：SAI1（PB0/PB2/PC2/PE2，AF6）+ ES8388 codec（硬件 I2C4，0x10）+ GPDMA1（请求号 91）<br>双播放路径：`tone`（内存合成方波，不依赖文件）+ `WAV`（SD 卡流式，8×16 KB 槽位环 + 独立读卡线程） | **已完成** | `audio-tone: 400 Hz for 800 ms requested, 830 ms measured（35200/35200 帧）`；WAV 15 s 实测 99.9%~100.1%；无 HardFault |
+| 2 | **网络** | **以太网 ETH1 驱动**：Synopsys GMAC5 + RMII + YT8512C（PHY 地址 0）<br>`arm_netinitialize()` 已实现，`eth0` 已注册，`CONFIG_NET` + DHCP 进入产品配置 | **单向跑通，端到端未完成** | RX：`rx=11`、`crcerr=0`、`alignerr=0`；TX：`tx=3`、MMC `txgood=3`、ARP 按 60 B 最小帧补齐；**`ping` 未打通**（剩余疑点在接收环推进/回收） |
+| 3 | **传感器** | **AP3216C 光感 / 接近驱动**（I2C4，0x1e），接入 **uORB** 框架发布 `light` / `proximity` 两个主题 | **已完成** | 真机采样：手遮住传感器 → `als 0 / ps 1023`；开机日志 `sensor answered correctly at address 1e` |
+| 4 | **存储** | **EEPROM 24C02**（I2C4，0x50，256 B / 8 B 页）→ `/dev/eeprom` | **已完成** | 开机 `[bringup] eeprom: 24C02 at 0x50 on I2C4 as /dev/eeprom` |
+| 5 | **片内外设** | **RTC / ADC1 / 片内温度 DTS / IWDG / WWDG / HASH** 从自检配置 `nsh-test` 搬入产品配置 `eye` | **已完成** | `/dev/rtc0` 走时实测 `00:00:23 → 00:01:29`；`/dev/adc0`、`/dev/temp0`、`/dev/watchdog0/1` 均已注册；ADC 无触发时返回 `-EAGAIN`（符合预期） |
+| 6 | **I2C** | **I2C4 成为共享传感器/编解码总线**（PE13=SCL / PE14=SDA，AF4，400 kHz），同时承载 EEPROM + AP3216C + ES8388 | **已完成** | 三个器件同总线并发访问均正常 |
+| 7 | **诊断能力** | 新增 5 条自检命令：`sai diag`（时钟链/八源扫描/MCLK 独立验证/引脚复用与电平/焊盘驱动/上下拉判据/关块对照）、`eth probe`（GMAC Stage 0）、`audio scan`（codec 总线扫描）、`audio tone`（不读文件的软件方波）、`hw all`（片内外设自检） | **已完成** | 镜像里没有 `dd`/`hexdump`，所有验证都做成了自带命令 |
+| 8 | **构建约束** | **FSBL LRUN 窗口 `0x100000` → `0x110000`**（1 MiB → 1.0625 MiB），否则新固件装不下 | **已完成** | `firmware/fsbl/Core/Inc/stm32_extmem_conf.h`；新窗口下固件 1,058,660 B 可正常启动 |
+| 9 | **移植层缺陷修复** | ① **VDDIO5 供电域未使能**（`PC2` = SAI1_SCK 所在域）② 移植层 4 处 VDDIO 位定义错误（VDDIO2/3 的 VRSEL 写到了只读 RDY 位、VDDIO5 整组错在 `SVMCR1` 应在 `SVMCR2`）③ SAI 两处 CR1 位定义错、`CCIPR7.SAI1SEL` 从未被写过 ④ `CCIPR2[18:16]` 是 PHY 接口类型而非内核时钟（原配成 MII） | **已完成** | 详见 `docs/STATUS_2026-11-04.md` 与 `docs/audio-buzzer.md` |
+
+### C. 新增的 9 个设备节点
+
+初赛固件（`strings nuttx.bin` 实测）只有 8 个外设节点；现在多出：
+
+```
+/dev/adc0        ADC1（内部通道 VREFINT / 芯片温度）
+/dev/temp0       片内结温传感器 DTS
+/dev/rtc0        RTC 实时时钟
+/dev/watchdog0   IWDG    /dev/watchdog1  WWDG
+/dev/eeprom      24C02 EEPROM（256 B / 8 B 页）
+/dev/i2c4        共享传感器 / 编解码总线
+/dev/uorb        uORB 主题框架（light / proximity）
+/dev/urandom     RNG 增强
+```
+
+---
+
+## 当前状态（2026-11-04）
 
 | 阶段 | 状态 | 说明 |
 |------|------|------|
@@ -38,22 +105,29 @@ NPU 眼动五分类（64×128）→ LVGL 界面动作 → 外设控制 + 蜂鸣�
 | Phase 6 | ✅ | **DCMIPP + IMX335 实时预览**、拍照存 BMP（含倒计时与重拍） |
 | Phase 7 | ✅ | **NPU/ATON 双模型**：人脸检测 + 眼动五分类（991 张自采数据集） |
 | Phase 8 | ✅ | **眼控应用**：闭眼=确认/进入（保持 0.8 s）、左右看=移动选择（1.2 s）、二级页内左看=返回（2.0 s）+ LED、信息、拍照、串口、关于 |
-| 附加 | ✅ | HyperRAM(32 MB) 打通、GT911 触摸、蜂鸣器音调反馈、系统信息页 |
+| Phase 9 | ✅ | **外设纵向扩充**：喇叭（SAI1 + ES8388）、以太网（GMAC5 + RMII，RX/TX 通）、AP3216C（uORB）、EEPROM、RTC / ADC / DTS / IWDG / WWDG 进产品配置；设备节点 8 → **17** |
+| 附加 | ✅ | HyperRAM(32 MB) 打通、GT911 触摸、蜂鸣器音调反馈、系统信息页、5 条自检命令 |
 
 **眼动识别实测**：自采数据集 991 张（五类），float 991/991、int8 990/991；板端实时运行
 （NPU 双模型，界面流畅）。
 
+**外设纵向扩充实测**：喇叭 400 Hz/800 ms 请求 → 830 ms 实测（35200/35200 帧）；
+以太网 RX `rx=11` / TX `tx=3`（`crcerr=0`），端到端 `ping` **尚未打通**；
+AP3216C 真机采样 `als 0 / ps 1023`（手遮住）；RTC 走时、看门狗注册、EEPROM 注册均已核对。
+
 ## 适配规模（一屏看完）
 
-| 维度 | 数字 |
-|------|------|
-| **芯片层驱动** | **43 个源文件 / 36,732 行**（`arch/arm/stm32n6/`），其中 ATON、DCMIPP、IMX335、LTDC/LCD、GT911、CACHEAXI、GPDMA 扩展、XSPI 等为本项目开发或修复 |
-| **板级支持** | 11 个源文件 / 2,632 行，**8 个板级配置**（产品 `eye`；NPU 分阶段 `npu` / `npu-cam` / `npu-o0`；端口自检 `nsh` / `nsh-test` / `nsh-qemu`；边缘计算历史配置 `edgesight`） |
-| **应用层** | **12 个 openvela 应用 / 12,170 行**（`apps/examples/`）：眼控主应用（含自绘 4 档位图字库）+ 11 个移植与调试工具（取帧 / 存图 / NPU 探针 / FSBL 自检 / 显示 / 视频 / 成像调试） |
-| **设备节点** | 产品配置 `eye`（固件实测，见 `firmware/images/nuttx.bin` 内的路径字符串）：`/dev/aie0`(NPU)、`/dev/lcd0`、`/dev/fb0`、`/dev/video0`、`/dev/input0`、`/dev/mmcsd0`、`/dev/userleds`、`/dev/buttons`、`/dev/ttyS0`(console)；测试配置 `nsh-test` 另有 `/dev/timer0–5`、`/dev/oneshot`、`/dev/pwm0/1`、`/dev/cap0`、`/dev/adc0/1`、`/dev/temp0`、`/dev/watchdog0/1`、`/dev/gpio1/2`、`/dev/i2c4` |
-| **核心树改动** | **13 个文件 / 4 个仓**：nuttx（Kconfig 挂接、fault 处理、cache、ATON 头）、apps（speexdsp、lvgldemo）、vendor/openvela（board hook 改 weak）、LVGL（MVE 编译门控）；补丁 + `core-tree-overlay/` 双通道交付，`scripts/verify-core-tree.sh` 离线自证三者一致 |
-| **原厂例程对照** | 原厂 **66 个裸机例程工程**（`01_LED` … `99_Applications/995_AI_Hand_Landmarks`）；本项目把与产品相关的初始化序列逐一移植进 NuttX：`15_RGBLCD`（LTDC 时序/引脚）、`38_SD_Card` / `39_FatFs`（SDMMC1 + FAT32 读写，拍照落盘）、`995_AI_Hand_Landmarks`（NPU/ATON 移植路径）、`01_LED`（板级点亮）、`40_Chinese_Show` 与官方 FSBL（XSPI1/HyperRAM 配置金标准），并全部上板验证。按“所需外设是否已在端口内适配”逐项对照，**当前板级配置已支持跑通 41/66 个例程**（板上外设 + LTDC/DMA2D + NPU + FPU/DSP/RTOS 等能力；其中触摸与 NPU 相关例程为同能力覆盖并已实测：`11_TPAD`、`27_Touch`、`991–995_AI_*`），另有 **7 个**例程所需的 FDCAN、USB 主机/设备与以太网控制器驱动**源码**已随端口提供（源码 + Kconfig + 构建接线齐备，但**无配置启用、未实测**，见下表「随端口提供」的状态列）；受**固件窗口**限制（FSBL 单次载入 1 MiB + 内部 RAM 2 MiB），未把全部例程代码纳入本仓库 |
-| **系统能力** | 产品配置 `eye`：NSH shell、procfs / tmpfs、FAT32 + SD 卡（`CONFIG_FS_FAT`）、LVGL 9.1 图形栈、ATON NPU 运行时、V4L2 风格取帧；其他配置（`nsh-test` 等）另有：多路定时器 / oneshot / 看门狗、ADC / PWM / RTC / HASH（见「随端口提供」） |
+> 口径：下列代码行为仓库内 `.c` + `.h` 实测（`find … | xargs wc -l`）；对比基线为初赛提交点 `847430a`。
+
+| 维度 | 数字 | 相对初赛 |
+|------|------|----------|
+| **芯片层驱动** | **100 个源文件 / 40,782 行**（`arch/arm/stm32n6/`），其中 ATON、DCMIPP、IMX335、LTDC/LCD、GT911、CACHEAXI、GPDMA 扩展、XSPI、**SAI1、ETH1** 等为本项目开发或修复 | +3,725 行 |
+| **板级支持** | 11 个源文件 / **4,100 行**，**8 个板级配置**（产品 `eye`；NPU 分阶段 `npu` / `npu-cam` / `npu-o0`；端口自检 `nsh` / `nsh-test` / `nsh-qemu`；边缘计算历史配置 `edgesight`） | **+1,468 行** |
+| **应用层** | **12 个 openvela 应用 / 16 个源文件 / 12,010 行**（`apps/examples/`）：眼控主应用（含自绘 4 档位图字库）+ 11 个移植与调试工具（取帧 / 存图 / NPU 探针 / FSBL 自检 / 显示 / 视频 / 成像调试） | — |
+| **设备节点** | 产品配置 `eye`（**固件实测**，`strings firmware/images/nuttx.bin` 内的路径字符串）：`/dev/aie0`(NPU)、`/dev/lcd0`、`/dev/fb0`、`/dev/video0`、`/dev/input0`、`/dev/mmcsd0`、`/dev/userleds`、`/dev/buttons`、`/dev/ttyS0`(console)、**`/dev/adc0`、`/dev/temp0`、`/dev/rtc0`、`/dev/watchdog0`、`/dev/watchdog1`、`/dev/eeprom`、`/dev/i2c4`、`/dev/uorb`**；`eth0` 网络设备已注册。测试配置 `nsh-test` 另有 `/dev/timer0–5`、`/dev/oneshot`、`/dev/pwm0/1`、`/dev/cap0`、`/dev/gpio1/2` | 8 → **17 个外设节点** |
+| **核心树改动** | **18 个文件 / 4 个仓**：nuttx（Kconfig 挂接、fault 处理、cache、ATON 头、**AP3216C sensor 驱动与其注册**）、apps（speexdsp、lvgldemo）、vendor/openvela（board hook 改 weak）、LVGL（MVE 编译门控）；补丁 + `core-tree-overlay/` 双通道交付，`scripts/verify-core-tree.sh` 离线自证三者一致 | — |
+| **原厂例程对照** | 原厂 **66 个裸机例程工程**（`01_LED` … `99_Applications/995_AI_Hand_Landmarks`）；本项目把与产品相关的初始化序列逐一移植进 NuttX：`15_RGBLCD`（LTDC 时序/引脚）、`38_SD_Card` / `39_FatFs`（SDMMC1 + FAT32 读写，拍照落盘）、`995_AI_Hand_Landmarks`（NPU/ATON 移植路径）、`01_LED`（板级点亮）、**`44_Music_Player`（SAI1 + ES8388 时钟树与初始化序列，喇叭攻关金标准）**、**`61_NetXDuo_TCP_Client`（ETH1 RMII 引脚与 RIF 配置金标准）**、`40_Chinese_Show` 与官方 FSBL（XSPI1/HyperRAM 配置金标准），并全部上板验证。按"所需外设是否已在端口内适配"逐项对照，**当前板级配置已支持跑通 43/66 个例程**（板上外设 + LTDC/DMA2D + NPU + FPU/DSP/RTOS 等能力；其中触摸与 NPU 相关例程为同能力覆盖并已实测：`11_TPAD`、`27_Touch`、`991–995_AI_*`；音频与以太网相关例程的能力已由 `44_Music_Player` / `61_NetXDuo` 两条金标准路径覆盖），另有少量例程所需的 FDCAN、USB 主机/设备驱动**源码**已随端口提供（源码 + Kconfig + 构建接线齐备，但**无配置启用、未实测**）；受**固件窗口**限制（FSBL 单次载入 1.0625 MiB + 内部 RAM 2 MiB），未把全部例程代码纳入本仓库 | 41 → **43/66** |
+| **系统能力** | 产品配置 `eye`：NSH shell、procfs / tmpfs、**FAT32 + SD 卡**、LVGL 9.1 图形栈、ATON NPU 运行时、V4L2 风格取帧、**音频播放（SAI1 + ES8388）、以太网协议栈（IPv4/TCP/UDP/ICMP/ARP + DHCP 客户端）、uORB 主题框架、RTC / ADC / 片内温度 / 双看门狗 / EEPROM / I2C4**；其他配置（`nsh-test` 等）另有：多路定时器 / oneshot、PWM / HASH | 大幅扩充 |
 
 ## 外设与驱动适配
 
@@ -76,10 +150,19 @@ NPU 眼动五分类（64×128）→ LVGL 界面动作 → 外设控制 + 蜂鸣�
 | 2D 图形加速 | DMA2D | `stm32n6_dma2d.c` | 图像搬运 / 格式转换 |
 | TF 卡 | SDMMC1 | `stm32n6_sdmmc.c` | `/dev/mmcsd0`（FAT32），拍照写盘 |
 | 串口控制台 | USART1（PE5/PE6，AF7） | `stm32n6_serial.c` | NSH 交互与日志输出 |
+| **喇叭 + ES8388 codec** | SAI1（PB0/PB2/PC2/PE2，AF6）+ 硬件 I2C4 控制 + GPDMA1 | ★ `stm32n6_sai.c`、★ 板级 `stm32n6_audio.c` | `eye_cam audio <file>` 实时播放 SD 卡 WAV（15 s 实测 99.9%~100.1%），播完静音；`eye_cam audio tone` 内存方波（400 Hz/800 ms → 实测 830 ms，35200/35200 帧）；详见 `docs/audio-buzzer.md` |
+| **以太网 ETH1** | Synopsys GMAC5 + RMII（PH10/PH11… AF11）+ YT8512C（PHY 地址 0） | ★ `stm32n6_ethernet.c`（`arm_netinitialize()` 已实现，注册 `eth0`）、★ `stm32n6_ethprobe.c`（Stage 0 探针） | RX `rx=11`（`crcerr=0`、`alignerr=0`）、TX `tx=3`（MMC `txgood=3`）、链路 100 Mbps 全双工（`bmsr=796d`）；**端到端 `ping` 未打通**（见「已知限制」） |
+| **光照 / 接近 AP3216C** | 硬件 I2C4（0x1e） | ★ `nuttx/drivers/sensors/ap3216c.c`（uORB） | `/dev/uorb` 发布 `light` / `proximity` 两主题；真机采样（手遮住 → `als 0 / ps 1023`） |
+| **EEPROM 24C02** | 硬件 I2C4（0x50，256 B / 8 B 页） | NuttX 通用 `i2c_xx24xx` | `/dev/eeprom` |
+| **RTC** | 板载 32.768 kHz + 备份域 | `stm32n6_rtc.c` + lowerhalf | `/dev/rtc0`；走时实测 `00:00:23 → 00:01:29` |
+| **ADC1** | 内部通道（VREFINT / 芯片温度） | `stm32n6_adc.c` | `/dev/adc0`；无触发时返回 `-EAGAIN`（符合预期） |
+| **片内温度 DTS** | 内部结温传感器 | `stm32n6_dts.c` | `/dev/temp0` |
+| **看门狗 IWDG / WWDG** | 片内 | `stm32n6_iwdg.c`、`stm32n6_wwdg.c` | `/dev/watchdog0`（32760 ms）、`/dev/watchdog1`（167 ms），均注册未启动 |
+| **I2C4 共享总线** | PE13=SCL / PE14=SDA（AF4，400 kHz） | `stm32n6_i2c.c` | `/dev/i2c4`；同总线并发承载 EEPROM + AP3216C + ES8388 |
 | 蜂鸣器 | PD3（经三极管驱动） + TIM3 中断 | ★ 板级 `stm32n6_buzzer.c` | 四音调反馈，可凭音高分辨动作 |
 | 用户 LED | PG10 / PE10（active-low） | `stm32n6_userleds.c` | `/dev/userleds` |
 | 按键 | PC6 / PD1 / PG11 | `stm32n6_userbuttons.c` | `/dev/buttons` |
-| 随机数 | RNG | `stm32n6_rng.c` | 已注册 `/dev/random`（固件字符串可核对）；产品功能未使用 |
+| 随机数 | RNG | `stm32n6_rng.c` | `/dev/random` + `/dev/urandom` |
 | I2C2（摄像头控制） | I2C2 主机模式，芯片驱动内部直接使用（**不注册 `/dev` 节点**） | `stm32n6_i2c.c`、`stm32n6_imx335.c` | IMX335 寄存器读写正常（出图即证明总线可用） |
 | 缓存 / 安全域 | CACHEAXI、I-Cache / D-Cache、RIF/RISAF 授权 | ★ `stm32n6_cacheaxi.c`、`stm32n6_start.c`、`stm32n6_rcc.c` | 性能关键路径：D-Cache 生效后单帧 **2.7 s → 60 ms（45×）** |
 | 异常与复位 | HardFault/MemFault/BusFault/UsageFault 处理、复位原因 | `arm_m/*`、★ `stm32n6_fsbl_regress.c` | 崩溃可定位到函数与行，不静默重启 |
@@ -88,28 +171,23 @@ NPU 眼动五分类（64×128）→ LVGL 界面动作 → 外设控制 + 蜂鸣�
 
 | 外设 | 驱动 | 设备节点 / 配置 | 状态（如实标注） |
 |------|------|------------------|------------------|
-| ADC1 / ADC2 | `stm32n6_adc.c` | `/dev/adc0`、`/dev/adc1` | 仅在 `nsh-test` 配置启用（内部 VREFINT 通道，无需外部接线）；**未接外设取过值** |
 | PWM | `stm32n6_tim.c` | `/dev/pwm0`、`/dev/pwm1` | 仅在 `nsh-test` 配置启用；**未接外设实测** |
-| 温度传感器 | `stm32n6_dts.c` | `/dev/temp0` | 仅在 `nsh-test` 配置启用（内部结温传感器）；**未做读数验证** |
-| RTC | `stm32n6_rtc.c` + lowerhalf | `/dev/rtc0` | 仅在 `nsh-test` 配置启用；**未做走时验证** |
-| HASH / 加解密 | `stm32n6_hash.c` | （无设备节点） | 仅在 `nsh-test` 配置启用；**未做算法结果验证** |
+| HASH / 加解密 | `stm32n6_hash.c` | （无设备节点） | 已在 `nsh-test` 与 `eye` 配置启用；**未做算法结果验证** |
 | 低功耗定时器 | `stm32n6_lptim.c` | （可选 PWM 输出） | 仅在 `nsh-test` 配置启用；**未接外设实测** |
 | 定时器 / oneshot | `stm32n6_tim.c`、`stm32n6_oneshot.c` | `/dev/timer0`、`/dev/oneshot` | 仅在 `nsh-test` 配置启用（TIM2 / TIM5）；**产品配置 `eye` 未启用；未做计时精度验证** |
-| 看门狗 | `stm32n6_iwdg.c`、`stm32n6_wwdg.c` | `/dev/watchdog0/1` | 仅在 `nsh-test` 配置启用；**产品配置 `eye` 未启用；未做喂狗/复位验证** |
 | CAN / CAN FD | `stm32n6_fdcan.c` | `/dev/can0`（启用后） | **无任何配置启用；未接收发器实测** |
-| 以太网 MAC | `stm32n6_ethernet.c` | `eth0`（RMII + LAN8742 PHY） | **无任何配置启用；未接 PHY/网线实测**（`edgesight` 配置只开 NET/lwIP 协议栈，未启用 MAC 驱动） |
-| USB OTG | `stm32n6_otg.c` | （启用后注册 USB 设备控制器） | **无任何配置启用；未接 USB 实测** |
+| USB OTG | `stm32n6_otg.c` | （启用后注册 USB 设备控制器） | **无任何配置启用；未接 USB 实测**（缺 `arm_usbinitialize()`） |
 | SPI | `stm32n6_spi.c` | `/dev/spi1`、`/dev/spi2`（启用后） | **无任何配置启用；未接从设备实测** |
-| I2C4（板载光感 AP3216C 总线） | `stm32n6_i2c.c` | `/dev/i2c4` | 仅在 `nsh-test` 配置启用（`CONFIG_STM32_I2C4`）；**未接器件实测** |
 | 外部 NOR 文件系统 | MTD + `stm32n6_xspi.c` | 可挂载 | XSPI 已用作启动介质（HyperRAM 读写自检通过）；**MTD 文件系统未挂载验证** |
 
-> 上述 14 项的驱动源码、Kconfig 与构建接线（`Make.defs` + `CMakeLists.txt`）均已随端口交付：
-> 打开对应 `CONFIG_STM32_*` 即会纳入编译（SPI / CAN / 以太网 / USB 四个驱动已按 `eye` 配置同款编译选项**逐文件编译通过**；以太网驱动有 2 条 unused-function 警告）；但**除 XSPI/启动介质外，均不属于本产品路径，也未做过实物级验证**。
+> 上述 8 项的驱动源码、Kconfig 与构建接线（`Make.defs` + `CMakeLists.txt`）均已随端口交付：
+> 打开对应 `CONFIG_STM32_*` 即会纳入编译（SPI / CAN 已按 `eye` 配置同款编译选项**逐文件编译通过**）；
+> 但**除 XSPI/启动介质外，均不属于本产品路径，也未做过实物级验证**。
 > 若需扩展到这些外设，请按 `docs/openvela-porting.md` 的流程补一次上板实测与记录。
 >
 > **整包构建实测**（以 `npu` 配置为基线）：**SPI / CAN 打开后可完整构建并链接**（产出 `nuttx.bin`）；
-> **以太网 / USB 目前只能编译、不能出固件** —— 使能 `CONFIG_NET` / `CONFIG_USBDEV` 后 NuttX 要求 arch 提供
-> `arm_netinitialize()` / `arm_usbinitialize()`，本端口尚未实现（MAC 驱动也缺少实例化入口）。
+> USB 目前只能编译、不能出固件 —— 使能 `CONFIG_USBDEV` 后 NuttX 要求 arch 提供 `arm_usbinitialize()`，本端口尚未实现。
+> 以太网已完成 `arm_netinitialize()` 并进入产品配置 `eye`（见上表「产品路径」）。
 > 另：不带模型的配置（如 `nsh`）需先选中一个 `CONFIG_AI_ATON_MODEL_*` 才能链接（`aton_model.c` 仅在选中模型时参与编译）。
 
 ## 端侧 AI 能力
@@ -143,9 +221,9 @@ contest2026_294_shiqian/
 │   ├── stm32cube/ bsp/  #   ST HAL/CMSIS/ExtMem_Manager + 正点原子 BSP
 │   ├── cubeide/ scripts/ sdtest/ build/
 │   └── images/          #   ★ 可烧录镜像（见"烧录"）
-├── arch/arm/stm32n6/    # 芯片层完整源码（含 ATON/DCMIPP/LTDC/XSPI 驱动）
+├── arch/arm/stm32n6/    # 芯片层完整源码（含 ATON/DCMIPP/LTDC/XSPI/SAI/ETH 驱动）
 │   ├── src/ include/    #   经 manifest 映射到 nuttx/arch/arm/{src,include}/stm32n6
-│   └── nuttx-core-incremental.patch   # 核心树增量（Kconfig / 异常处理 / I-Cache / 向量表，9 个上游文件）
+│   └── nuttx-core-incremental.patch   # 核心树增量（Kconfig / 异常处理 / I-Cache / 向量表 / AP3216C sensor，14 个上游文件）
 ├── board/atk-dnn647/    # 板级层完整源码（经 manifest 映射到 vendor/openvela/boards/atk-dnn647）
 ├── app/                 # openvela 应用（经 manifest 映射到 apps/examples/）
 │   ├── examples/eye_cam/    ★ 眼控主应用（UI + 摄像头 + NPU + 拍照 + 蜂鸣器）
@@ -159,7 +237,7 @@ contest2026_294_shiqian/
 │   ├── training/        #   训练/量化脚本 + checkpoint
 │   ├── exported/        #   导出的 ONNX（float + QDQ int8）
 │   └── cubeai/          #   Cube.AI(CPU) 路径未采用，目录内说明原因
-├── docs/                # 项目文档（★ 先看 reproduce.md）
+├── docs/                # 项目文档（★ 先看 reproduce.md；决赛新增 audio-buzzer.md / STATUS_2026-11-04.md）
 ├── .claude/skills/      # ★ 自建 Skill（本项目的可复用流程）
 ├── hardware/            # 硬件资料（引脚分配表）
 ├── scripts/             # 构建 / 边界检查 / 镜像校验脚本
@@ -188,8 +266,8 @@ repo sync -c -j8
 #    libs/ai_aton                   -> nuttx/libs/ai_aton
 #    app/examples/*                 -> apps/examples/*
 
-# 3. 核心树增量：4 个补丁 / 13 个文件（芯片层 / 板级 / 应用目录之外的上游改动）
-#    nuttx(9) · apps(2) · vendor/openvela(1) · apps/graphics/lvgl/lvgl(1)
+# 3. 核心树增量：4 个补丁 / 18 个文件（芯片层 / 板级 / 应用目录之外的上游改动）
+#    nuttx(14) · apps(2) · vendor/openvela(1) · apps/graphics/lvgl/lvgl(1)
 #    脚本会自动 git apply，失败则三方合并；仍失败时用 --overlay 直接覆盖
 bash contest2026_294_shiqian/scripts/apply-core-tree.sh
 
@@ -199,7 +277,7 @@ rm -rf cmake_out/atk-dnn647_eye
 ```
 
 产物：`cmake_out/atk-dnn647_eye/nuttx.bin`（本仓库 `firmware/images/nuttx.bin`，
-948,064 B，md5 `a60d2701426123c94c480676ff56dbcf`）
+**1,058,660 B**，md5 `ae21c66f5976934aac013310363fca33`，sha256 前16位 `bd888faaf20a8394`）
 
 ## 烧录
 
@@ -222,6 +300,11 @@ nsh> eye_cam                 # 启动眼控界面：主页 3×2 网格
                              #   二级页内左看返回（保持 2.0 s），触发后 0.6 s 冷却
 nsh> eye_cam tone 400 500    # 蜂鸣器低音（自检）
 nsh> eye_cam tone 3000 500   # 蜂鸣器高音
+nsh> eye_cam audio tone 440 800   # 喇叭方波试音（不依赖任何文件）
+nsh> eye_cam audio scan      # codec 总线地址扫描（应看到 0x10 / 0x1e / 0x50）
+nsh> eye_cam sai diag        # 喇叭全链路诊断（时钟链 / 八源 / MCLK / 引脚 / 焊盘）
+nsh> eye_cam hw all          # 片内外设自检：RTC / ADC / DTS / IWDG / WWDG / EEPROM / AP3216C
+nsh> eye_cam eth probe       # ETH1 Stage 0（PHY / MDIO / 时钟）；接口 up 后不要再跑
 nsh> eye_cam xspi dump       # HyperRAM / XSPI 状态
 ```
 
@@ -229,9 +312,11 @@ nsh> eye_cam xspi dump       # HyperRAM / XSPI 状态
 
 | 约束 | 上限 | 当前 | 说明 |
 |---|---|---|---|
-| `_ebss` | ≤ `0x34200000` | `0x341b45ac`（余 ~299 KB） | 之上是 NPU/AXISRAM 域，越界会**静默不启动** |
-| 固件体积 | ≤ 1 MiB | 948,064 B（余 ~98 KB） | FSBL `EXTMEM_LRUN_SOURCE_SIZE` 限制 |
+| `_ebss` | ≤ `0x34200000` | `0x341F69C8`（余 ~38 KB） | 之上是 NPU/AXISRAM 域，越界会**静默不启动** |
+| 固件体积 | ≤ **1,114,112 B**（`0x110000`） | 1,058,660 B（余 ~54 KB） | FSBL `EXTMEM_LRUN_SOURCE_SIZE` 限制；决赛阶段已从 `0x100000` 扩到 `0x110000` |
 | LVGL 堆 | 192 KB（内部 RAM） | — | 放 HyperRAM 会崩（实测），保持 `LV_MEM_ADR=0x0` |
+| 改 defconfig 后 | — | — | **必须 `rm -rf cmake_out/atk-dnn647_eye`**，`.config` 不会自动从 defconfig 重建 |
+| Flash 布局 | — | — | FSBL `0x70000000` / 应用 `0x70100000` / eye 权重 `0x70400000` / face 权重 `0x70700000`；**禁止整片擦除**，会丢权重 |
 
 ## 代码基线说明
 
@@ -248,12 +333,15 @@ nsh> eye_cam xspi dump       # HyperRAM / XSPI 状态
 
 | 限制 | 现状 | 说明与排查记录 |
 |------|------|----------------|
-| 喇叭播放（ES8388 + SAI1） | 未打通 | 时钟链（HSE→PLL2→IC7→SAI1）与 MCLK 实测正常，但 SAI FIFO 恒定不排空（DMA 与 CPU 直灌均超时）。声音反馈改用**蜂鸣器四音调**实现，见 `docs/audio-buzzer.md`、ADR-0005 |
+| **ES8388 上电后只能配置一次** | 软件侧无解，需硬件配合 | SAI 跑过之后 ES8388 永久 NACK I2C（实测 `SAI 未启动 → 应答`、`SAI 启动 → -6`，延时 100 ms 仍 `-6`），该状态只能靠**断掉 codec 供电**清除；同一 I2C4 上 AP3216C / EEPROM 始终正常，故 MCU 侧 I2C、引脚、时钟均无问题。已用 **SAI 保持运行 + 持续喂零** 实现静音（`stm32n6_sai_output_quiet()` + `saiidle` 线程）。治本方案：给 `CE`(pin26) 或 DVDD/PVDD 加一路可控 GPIO/负载开关，由驱动在配置前复位 codec。详见 `docs/audio-buzzer.md` |
+| **以太网端到端 ping 未打通** | RX / TX 双向已通，协议栈未闭环 | 已排除：RISAF/RIF 拦截（`IASR=0`）、总线错误（`DMACSR.FBE=0`）、环地址被截断、`RXPBL=0` 非法值、`DMACRXDTPR` 语义。剩余疑点在**接收环的推进 / 回收**：日志中出现过"两个已完成的描述符（`OWN` 已清、长度正确）一直未被回收，`rx` 计数不再增长"，需继续在 `stm32n6_receive()` 的 `rxhead` 与尾指针推进逻辑上收敛 |
 | 界面显示与摄像头预览 | 分时互斥 | 只有一块 750 KB framebuffer（为内部 RAM 让路），预览与 LVGL 界面不并存 |
-| 眼动识别泛化性 | 自采数据集 | 991 张五分类数据集上 float 991/991、int8 990/991；换人 / 换光照的系统性评测未覆盖 |
+| 眼动识别泛化性 | 自采数据集 | 991 张五分类数据集上 float 991/991、int8 990/991；换人 / 换光照的系统性评测未覆盖（决赛阶段正用 Columbia Gaze 补） |
 | 曝光与增益 | 参数化固定值 | 与裸机金标准一致的固定参数，未做自适应（AE / AGC） |
-| USB 主机、以太网 | 源码随端口提供、**无配置启用** | 未接外设实测；整包链接还需补 `arm_netinitialize()` / `arm_usbinitialize()`（见「随端口提供」注） |
+| USB 主机 | 源码随端口提供、**无配置启用** | 未接外设实测；整包链接还需补 `arm_usbinitialize()`（见「随端口提供」注） |
 | CAN / SPI | 源码随端口提供、**无配置启用** | 未接收发器 / 从设备；打开对应 CONFIG 后可完整构建（已实测） |
+| 触摸 GT911 | 仅识别到器件 | 开机日志 `gt9xxx: touch IC found, ID=911`；`/dev/input0` 注册与坐标解析已在初赛验证，决赛阶段换屏后**尚未重做端到端触摸验证** |
+| SD 卡冷启动 | 偶发 `card not ready` / `-110` | 正常时 30,535,680 blocks（约 14.5 GB）；复位后可挂载 |
 | 原厂例程覆盖 | 部分纳入 | 所需外设未接入或未适配的例程（OLED / FMC 屏 / 外接传感器 / SD-NAND / JPEG / SPDIF 等）未纳入本仓库，见「适配规模」 |
 
 ## AI Coding 日志
@@ -270,9 +358,9 @@ nsh> eye_cam xspi dump       # HyperRAM / XSPI 状态
 | 环节 | AI 如何参与 | 实际效果 |
 |------|-------------|----------|
 | 需求拆解 / 方案 | 读官方文档与厂商资料，梳理自定义 FSBL、RIF/RISAF 授权、DCMIPP 寄存器等陌生领域 | 纠正 BootROM 向量表偏移（0x70 → 0x400）等关键误判，少走弯路 |
-| 编码 | 按子系统生成驱动骨架（sensor / chardev / fb / input / timer…），批量过 `checkpatch.sh` | 支撑 43 个芯片层源文件 / 36,732 行的实现速度 |
-| 调试 | 寄存器 dump 解读、**裸机金标准 vs NuttX 双端逐位 diff**、单变量最小实验设计 | 摄像头 MIPI / SDMMC / NPU 三个卡点的定位（见自建 Skill） |
-| 文档 | 生成并随代码同步 requirements / design / tasks、ADR 与复现指南 | 6 篇 ADR + 13 篇 `docs/` |
+| 编码 | 按子系统生成驱动骨架（sensor / chardev / fb / input / timer…），批量过 `checkpatch.sh` | 支撑 100 个芯片层源文件 / 40,782 行的实现速度 |
+| 调试 | 寄存器 dump 解读、**裸机金标准 vs NuttX 双端逐位 diff**、单变量最小实验设计 | 摄像头 MIPI / SDMMC / NPU / SAI / ETH 五个卡点的定位（见自建 Skill） |
+| 文档 | 生成并随代码同步 requirements / design / tasks、ADR 与复现指南 | 6 篇 ADR + 24 篇 `docs/` |
 | 方法论沉淀 | 把反复用到的流程固化成 Skill 与脚本 | 2 个 Skill（下节）+ 边界自检脚本 |
 
 日志规模：**14 个会话 / 38,296 事件**（`logs/leihan-oli/`），官方 `validate-log.py` 校验 **ALL OK**。
@@ -299,7 +387,7 @@ bash tests/run_all.sh
 
 | 检查 | 覆盖 |
 |------|------|
-| `check_artifacts.py` | 4 个镜像存在、**Intel HEX 行校验和**、装载地址与烧录表一致、`nuttx.bin ≤ 1 MiB` |
+| `check_artifacts.py` | 4 个镜像存在、**Intel HEX 行校验和**、装载地址与烧录表一致、`nuttx.bin ≤ 0x110000`（1.0625 MiB） |
 | `check_dataset.py` | 数据集 991 张 / 五类计数 / 命名前缀 / `meta.txt` |
 | `check_logs.py` | AI 日志：优先官方 `tools/validate-log.py`（python ≥ 3.9），否则退回结构检查 |
 

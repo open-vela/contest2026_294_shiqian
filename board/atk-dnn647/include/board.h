@@ -173,8 +173,17 @@
 
 /* I/O voltage domains ******************************************************/
 
-#define BOARD_PWR_VDDIO  (PWR_SVMCR3_VDDIO2SV    | PWR_SVMCR3_VDDIO3SV | \
-                          PWR_SVMCR3_VDDIO2VRSEL | PWR_SVMCR3_VDDIO3VRSEL)
+/* Supply-valid only: leave every voltage range at its 3.3 V setting.
+ *
+ * The previous spelling also ORed PWR_SVMCR3_VDDIO2VRSEL/VDDIO3VRSEL, but
+ * those macros pointed at bits 16/17 -- the read-only RDY bits -- so the
+ * writes never landed and the range stayed at 3.3 V.  That is what the board
+ * has been running on and everything on those domains works, so correcting
+ * the macros must not silently move VDDIO2 to the 1.8 V range the vendor's
+ * audio demo selects.  Making that change is a separate experiment.
+ */
+
+#define BOARD_PWR_VDDIO  (PWR_SVMCR3_VDDIO2SV | PWR_SVMCR3_VDDIO3SV)
 
 /* Alternate function pin selections ****************************************/
 

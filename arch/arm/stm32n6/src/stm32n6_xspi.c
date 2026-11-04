@@ -254,44 +254,15 @@ static inline void xspi_putreg(
 
 static void stm32n6_xspi_dump(int bus_num)
 {
-  FAR struct stm32n6_xspi_priv_s *priv;
+  /* The controller register dump that used to live here recorded what the
+   * boot ROM and FSBL left behind - the known-good configuration, since the
+   * FSBL copies the image out of the NOR with plain memory-mapped reads.  It
+   * has done its job; the call site is kept so the init sequence still reads
+   * like the vendor one, and the body is a no-op.
+   */
 
-  switch (bus_num)
-    {
-      case 1:
-        priv = &g_xspi1_priv;
-        break;
-      case 2:
-        priv = &g_xspi2_priv;
-        break;
-      default:
-        return;
-    }
-
-  syslog(LOG_INFO,
-         "xspi%d: CR=%08lx DCR1=%08lx DCR2=%08lx DCR3=%08lx DCR4=%08lx\n",
-         bus_num,
-         (unsigned long)xspi_getreg(priv, XSPI_CR_OFFSET),
-         (unsigned long)xspi_getreg(priv, XSPI_DCR1_OFFSET),
-         (unsigned long)xspi_getreg(priv, XSPI_DCR2_OFFSET),
-         (unsigned long)xspi_getreg(priv, XSPI_DCR3_OFFSET),
-         (unsigned long)xspi_getreg(priv, XSPI_DCR4_OFFSET));
-
-  syslog(LOG_INFO,
-         "xspi%d: CCR=%08lx TCR=%08lx SR=%08lx LPTR=%08lx XSPIM_CR=%08lx"
-         " HLCR=%08lx\n",
-         bus_num,
-         (unsigned long)xspi_getreg(priv, XSPI_CCR_OFFSET),
-         (unsigned long)xspi_getreg(priv, XSPI_TCR_OFFSET),
-         (unsigned long)xspi_getreg(priv, XSPI_SR_OFFSET),
-         (unsigned long)xspi_getreg(priv, XSPI_LPTR_OFFSET),
-         (unsigned long)getreg32(STM32N6_XSPIM_BASE + XSPI_CR_OFFSET),
-         (unsigned long)xspi_getreg(priv, XSPI_HLCR_OFFSET));
+  UNUSED(bus_num);
 }
-
-/****************************************************************************
- * Public Functions
- ****************************************************************************/
 
 int stm32n6_xspi_initialize(int bus_num)
 {
@@ -382,7 +353,6 @@ int stm32n6_xspi_initialize(int bus_num)
 
       if (priv->hyperbus)
         {
-          uint32_t fmode;
           int retries;
 
           /* The boot ROM arms both controllers, but it only ever looked for a
@@ -424,7 +394,6 @@ int stm32n6_xspi_initialize(int bus_num)
           /* 1. Leave memory-mapped mode, or the registers below are ignored */
 
           regval  = xspi_getreg(priv, XSPI_CR_OFFSET);
-          fmode   = (regval & XSPI_CR_FMODE_MASK) >> XSPI_CR_FMODE_SHIFT;
           regval &= ~XSPI_CR_FMODE_MASK;
           xspi_putreg(priv, XSPI_CR_OFFSET, regval);
 
@@ -461,16 +430,6 @@ int stm32n6_xspi_initialize(int bus_num)
                       (3 << XSPI_CR_FTHRES_SHIFT) |
                       (XSPI_CR_FMODE_MEMORY_MAPPED << XSPI_CR_FMODE_SHIFT));
 
-          syslog(LOG_INFO,
-                 "xspi%d: HyperRAM armed (FMODE %lu -> %lu, CCR=%08lx"
-                 " WCCR=%08lx DCR2=%08lx HLCR=%08lx CR=%08lx)\n",
-                 bus_num, (unsigned long)fmode,
-                 (unsigned long)XSPI_CR_FMODE_MEMORY_MAPPED,
-                 (unsigned long)xspi_getreg(priv, XSPI_CCR_OFFSET),
-                 (unsigned long)xspi_getreg(priv, XSPI_WCCR_OFFSET),
-                 (unsigned long)xspi_getreg(priv, XSPI_DCR2_OFFSET),
-                 (unsigned long)xspi_getreg(priv, XSPI_HLCR_OFFSET),
-                 (unsigned long)xspi_getreg(priv, XSPI_CR_OFFSET));
         }
 
       priv->initialized = true;

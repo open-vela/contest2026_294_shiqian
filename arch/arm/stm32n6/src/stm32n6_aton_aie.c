@@ -1509,14 +1509,28 @@ static void stm32n6_aton_risaf_clear(void)
 
 static void stm32n6_aton_wd_puts(FAR const char *str)
 {
+#ifdef CONFIG_STM32N6_ATON_VERBOSE
   while (*str != '\0')
     {
       up_putc((int)(unsigned char)*str++);
     }
+#else
+  /* The NPU bring-up dumps (SAU/SAU windows, RISAF state, weight probing,
+   * matrix self test) are written byte by byte straight to the console so
+   * they survive a wedged console driver.  They are exactly what was needed
+   * while the boot path was being brought up, and exactly what a product
+   * image should not print: several hundred lines on every boot, and again on
+   * every inference run.  Build with CONFIG_STM32N6_ATON_VERBOSE to get them
+   * back; the one line summaries (readiness probe, runtime selftest) stay.
+   */
+
+  (void)str;
+#endif
 }
 
 static void stm32n6_aton_wd_u32(uint32_t value)
 {
+#ifdef CONFIG_STM32N6_ATON_VERBOSE
   char buf[11];
   int  n = 0;
 
@@ -1536,10 +1550,14 @@ static void stm32n6_aton_wd_u32(uint32_t value)
     {
       up_putc(buf[n]);
     }
+#else
+  (void)value;
+#endif
 }
 
 static void stm32n6_aton_wd_hex(uint32_t value)
 {
+#ifdef CONFIG_STM32N6_ATON_VERBOSE
   int i;
 
   for (i = 28; i >= 0; i -= 4)
@@ -1547,6 +1565,9 @@ static void stm32n6_aton_wd_hex(uint32_t value)
       uint32_t nib = (value >> i) & 0xf;
       up_putc((int)(nib < 10 ? '0' + nib : 'a' + nib - 10));
     }
+#else
+  (void)value;
+#endif
 }
 
 static void stm32n6_aton_wd_task(FAR struct tcb_s *tcb, FAR void *arg)

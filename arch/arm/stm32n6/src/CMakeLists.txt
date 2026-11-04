@@ -175,6 +175,12 @@ if(CONFIG_STM32_EMAC)
   list(APPEND SRCS stm32n6_ethernet.c)
 endif()
 
+# The GMAC bring-up probe is independent of the network stack on purpose: it
+# only touches ETH1 registers, and gating it behind CONFIG_STM32_EMAC (which
+# selects NET) would drag the IP stack into images that just want to ask the
+# PHY who it is.
+list(APPEND SRCS stm32n6_ethprobe.c)
+
 if(CONFIG_STM32_FDCAN1)
   list(APPEND SRCS stm32n6_fdcan.c)
 endif()

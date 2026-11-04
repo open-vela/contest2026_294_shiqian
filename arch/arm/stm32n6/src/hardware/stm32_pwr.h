@@ -74,17 +74,43 @@
 #define PWR_SVMCR3_VDDIO2SV     (1 << 8)
 #define PWR_SVMCR3_VDDIO3SV     (1 << 9)
 #define PWR_SVMCR3_ASV          (1 << 12) /* VDDA18ADC supply valid */
-#define PWR_SVMCR3_VDDIO2VRSEL  (1 << 16)
-#define PWR_SVMCR3_VDDIO3VRSEL  (1 << 17)
 
-/* PWR_SVMCR1 bits (VDDIO4/VDDIO5 supply valid + voltage range,
- * from CMSIS PWR_SVMCR1 -- note these live in SVMCR1, NOT SVMCR3!)
+/* Voltage-range selects sit in the high half of the register, not next to the
+ * supply-valid bits.  Checked against CMSIS stm32n647xx.h:
+ *
+ *   PWR_SVMCR3_VDDIOVRSEL_Pos  = 24
+ *   PWR_SVMCR3_VDDIO2VRSEL_Pos = 25
+ *   PWR_SVMCR3_VDDIO3VRSEL_Pos = 26
+ *
+ * The earlier values here (16 and 17) are VDDIO2RDY and VDDIO3RDY, which are
+ * read-only status bits, so a write of VRSEL through them was silently
+ * dropped and the voltage range never got configured at all.
+ */
+
+#define PWR_SVMCR3_VDDIOVRSEL   (1 << 24)
+#define PWR_SVMCR3_VDDIO2VRSEL  (1 << 25)
+#define PWR_SVMCR3_VDDIO3VRSEL  (1 << 26)
+#define PWR_SVMCR3_VDDIO2RDY    (1 << 16)
+#define PWR_SVMCR3_VDDIO3RDY    (1 << 17)
+
+/* PWR_SVMCR1 bits: VDDIO4 only.
+ *
+ * VDDIO5 used to be described here as SVMCR1 bits 9 and 25.  It is not:
+ * CMSIS puts it in PWR_SVMCR2 at bit 8 (supply valid) and bit 24 (range).
+ * Using the SVMCR1 spellings wrote a reserved bit and left the VDDIO5 pads
+ * without supply, which is the same class of failure as the SDMMC1 puzzle in
+ * 2026-09: every register reads back set and the pin still never drives.
  */
 
 #define PWR_SVMCR1_VDDIO4SV     (1 << 8)
 #define PWR_SVMCR1_VDDIO4VRSEL  (1 << 24)
-#define PWR_SVMCR1_VDDIO5SV     (1 << 9)
-#define PWR_SVMCR1_VDDIO5VRSEL  (1 << 25)
+#define PWR_SVMCR1_VDDIO4RDY    (1 << 16)
+
+/* PWR_SVMCR2 bits (VDDIO5) */
+
+#define PWR_SVMCR2_VDDIO5SV     (1 << 8)
+#define PWR_SVMCR2_VDDIO5VRSEL  (1 << 24)
+#define PWR_SVMCR2_VDDIO5RDY    (1 << 16)
 
 /* PWR_VOSCR bits */
 

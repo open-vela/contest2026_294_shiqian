@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Check the two limits that fail silently when exceeded:
 #   _ebss <= 0x34200000   (above it lives the NPU/AXISRAM domain: boot just stops)
-#   nuttx.bin <= 1 MiB    (the FSBL copies at most EXTMEM_LRUN_SOURCE_SIZE)
+#   nuttx.bin <= 0x110000 (the FSBL copies at most EXTMEM_LRUN_SOURCE_SIZE)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,7 +28,7 @@ EBSS_HEX="$($NM "$ELF" | awk '$2 == "A" && $3 == "_ebss" {print $1}')"
 EBSS=$((16#$EBSS_HEX))
 LIMIT=$((0x34200000))
 SIZE="$(stat -c %s "$BIN")"
-SIZE_LIMIT=1048576
+SIZE_LIMIT=$((0x110000))
 
 printf '  _ebss      = 0x%08x  (limit 0x%08x, margin %d B)\n' \
        "$EBSS" "$LIMIT" "$((LIMIT - EBSS))"
@@ -37,6 +37,6 @@ printf '  nuttx.bin  = %d B        (limit %d B, margin %d B)\n' \
 
 rc=0
 [ "$EBSS" -le "$LIMIT" ] || { echo "  ✗ _ebss over the NPU domain" >&2; rc=1; }
-[ "$SIZE" -le "$SIZE_LIMIT" ] || { echo "  ✗ firmware over 1 MiB" >&2; rc=1; }
+[ "$SIZE" -le "$SIZE_LIMIT" ] || { echo "  ✗ firmware over 0x110000 (1.0625 MiB)" >&2; rc=1; }
 [ "$rc" -eq 0 ] && echo "  ✓ both limits OK"
 exit "$rc"

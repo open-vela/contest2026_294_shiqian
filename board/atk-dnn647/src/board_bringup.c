@@ -71,6 +71,8 @@
 #  ifdef CONFIG_DEV_GPIO
 #    include "stm32n6_gpio.h"
 #  endif
+#  include "hardware/stm32_memorymap.h"
+#  include "hardware/stm32_pwr.h"
 #  if defined(CONFIG_STM32_TIM2) || defined(CONFIG_STM32_TIM3_PWM) || \
       defined(CONFIG_STM32_TIM15_CAP)
 #    include "stm32n6_tim.h"
@@ -92,6 +94,12 @@
 #  ifdef CONFIG_STM32_I2C4
 #    include <nuttx/i2c/i2c_master.h>
 #    include "stm32n6_i2c.h"
+#    ifdef CONFIG_I2C_EE_24XX
+#      include <nuttx/eeprom/i2c_xx24xx.h>
+#    endif
+#    ifdef CONFIG_SENSORS_AP3216C
+#      include <nuttx/sensors/ap3216c.h>
+#    endif
 #  endif
 #  ifdef CONFIG_STM32_IWDG
 #    include "stm32n6_iwdg.h"
@@ -127,6 +135,14 @@
 uint16_t g_ltdc_fb[800 * 480] __attribute__((aligned(64)));
 #endif
 
+/* ee24xx_initialize() keeps the name it is given rather than copying it, so
+ * it cannot point at a string literal.
+ */
+
+#ifdef CONFIG_I2C_EE_24XX
+static char g_eeprom_devname[] = "/dev/eeprom";
+#endif
+
 static int board_bringup(void)
 {
   int ret = OK;
@@ -151,6 +167,47 @@ static int board_bringup(void)
 #endif
 
 #ifdef CONFIG_ARCH_CHIP_STM32N6
+  /* Report the I/O supply domains before anything tries to drive a pin.
+   *
+   * AN5967 splits the pads across five supplies, and a domain that is not
+   * marked supply-valid behaves in a way that costs hours: the pin's mode
+   * and alternate function read back exactly as programmed, and the pad
+   * never drives.  That is how SDMMC1 stayed frozen in 2026-09 (VDDIO4) and
+   * why SAI1_SCK on PC2 stayed flat in 2026-10 (VDDIO5).
+   *
+   * VDDIO5 covers PC[0], PC[5:2] and PE[4]; VDDIO4 covers PC[1], PC[12:6]
+   * and PH[9,2]; VDDIO2 covers PO/PP; VDDIO3 covers PN; everything else
+   * rides on VDD.
+   */
+
+  {
+    uint32_t svmcr1 = getreg32(STM32_PWR_SVMCR1);
+    uint32_t svmcr2 = getreg32(STM32_PWR_SVMCR2);
+    uint32_t svmcr3 = getreg32(STM32_PWR_SVMCR3);
+
+    syslog(LOG_INFO, "[bringup] vddio: 4=%d/rdy%d(r%d) 5=%d/rdy%d(r%d) "
+           "2=%d/rdy%d 3=%d/rdy%d  (svmcr1=%08lx svmcr2=%08lx "
+           "svmcr3=%08lx)\n",
+           (svmcr1 & PWR_SVMCR1_VDDIO4SV) ? 1 : 0,
+           (svmcr1 & PWR_SVMCR1_VDDIO4RDY) ? 1 : 0,
+           (svmcr1 & PWR_SVMCR1_VDDIO4VRSEL) ? 1 : 0,
+           (svmcr2 & PWR_SVMCR2_VDDIO5SV) ? 1 : 0,
+           (svmcr2 & PWR_SVMCR2_VDDIO5RDY) ? 1 : 0,
+           (svmcr2 & PWR_SVMCR2_VDDIO5VRSEL) ? 1 : 0,
+           (svmcr3 & PWR_SVMCR3_VDDIO2SV) ? 1 : 0,
+           (svmcr3 & PWR_SVMCR3_VDDIO2RDY) ? 1 : 0,
+           (svmcr3 & PWR_SVMCR3_VDDIO3SV) ? 1 : 0,
+           (svmcr3 & PWR_SVMCR3_VDDIO3RDY) ? 1 : 0,
+           (unsigned long)svmcr1, (unsigned long)svmcr2,
+           (unsigned long)svmcr3);
+
+    if (!(svmcr2 & PWR_SVMCR2_VDDIO5SV))
+      {
+        syslog(LOG_ERR, "[bringup] vddio: VDDIO5 is not supply-valid -- "
+               "PC[5:2], PC0 and PE4 cannot drive (SAI1_SCK is on PC2)\n");
+      }
+  }
+
 #  ifdef CONFIG_STM32_RTC
   /* Initialize the RTC peripheral (clock, prescaler, calendar) */
 
@@ -168,6 +225,10 @@ static int board_bringup(void)
       if (ret < 0)
         {
           syslog(LOG_ERR, "ERROR: rtc_initialize failed: %d\n", ret);
+        }
+      else
+        {
+          syslog(LOG_INFO, "[bringup] rtc: /dev/rtc0 registered\n");
         }
     }
 #    endif
@@ -460,6 +521,11 @@ static int board_bringup(void)
     {
       syslog(LOG_ERR, "ERROR: ADC1 init failed: %d\n", ret);
     }
+  else
+    {
+      syslog(LOG_INFO, "[bringup] adc1: /dev/adc0 registered "
+             "(VREFINT, software trigger)\n");
+    }
 #  endif
 
 #  ifdef CONFIG_STM32_ADC2
@@ -471,6 +537,11 @@ static int board_bringup(void)
   if (ret < 0)
     {
       syslog(LOG_ERR, "ERROR: ADC2 init failed: %d\n", ret);
+    }
+  else
+    {
+      syslog(LOG_INFO, "[bringup] adc2: /dev/adc1 registered "
+             "(VBAT+VDDCORE scan)\n");
     }
 #  endif
 
@@ -484,6 +555,11 @@ static int board_bringup(void)
   if (ret < 0)
     {
       syslog(LOG_ERR, "ERROR: DTS init failed: %d\n", ret);
+    }
+  else
+    {
+      syslog(LOG_INFO, "[bringup] dts: /dev/temp0 registered "
+             "(die junction)\n");
     }
 #  endif
 
@@ -508,6 +584,81 @@ static int board_bringup(void)
             {
               syslog(LOG_ERR, "ERROR: i2c_register(4) failed: %d\n", ret);
             }
+          else
+            {
+              syslog(LOG_INFO, "[bringup] i2c4: /dev/i2c4 registered\n");
+            }
+
+#ifdef CONFIG_SENSORS_AP3216C
+          /* The onboard AP3216C sits on the same bus at 0x1e.  Its driver
+           * logs every transaction and refuses to register unless the mode
+           * register reads back what was written, so a partial failure shows
+           * up in this log rather than as a silent missing topic.
+           */
+
+          syslog(LOG_INFO, "[bringup] ap3216c: probing address 0x1e\n");
+
+          ret = ap3216c_register(0, i2c4, 0x1e);
+          if (ret < 0)
+            {
+              syslog(LOG_ERR, "[bringup] ap3216c: FAILED, %d\n", ret);
+            }
+          else
+            {
+              syslog(LOG_INFO, "[bringup] ap3216c: light and proximity "
+                     "topics registered\n");
+            }
+#endif
+
+#if defined(CONFIG_STM32_SAI1)
+          /* Bring the codec up here, while the transmit block is still
+           * stopped.
+           *
+           * Left alone, the ES8388 sits in its power-on state with its output
+           * stages open, and that is audible as a hiss from the moment the
+           * board is powered.  There is also only one window in which it can
+           * be configured at all: once the transmit block runs and drives
+           * its clocks to the codec, the codec stops acknowledging its I2C
+           * address.  So it is configured now, with the outputs left shut,
+           * and playback opens them for the length of a transfer.
+           */
+
+          extern int stm32n6_audio_init(void);
+
+          ret = stm32n6_audio_init();
+          if (ret < 0)
+            {
+              syslog(LOG_ERR, "[bringup] audio: codec init failed: %d\n",
+                     ret);
+            }
+          else
+            {
+              syslog(LOG_INFO, "[bringup] audio: ES8388 configured, "
+                     "outputs off until playback\n");
+            }
+#endif
+
+#ifdef CONFIG_I2C_EE_24XX
+          /* The onboard 24C02 sits on the same bus at 0x50.
+
+           * Its geometry cannot be read from the part the way an SPI flash
+           * can, so the size and page write length are supplied here: 256
+           * bytes in 8-byte pages.  Exposing it as a block device means the
+           * usual tools work on it with no further support code.
+           */
+
+          ret = ee24xx_initialize(i2c4, 0x50, g_eeprom_devname,
+                                  EEPROM_24XX02, 0);
+          if (ret < 0)
+            {
+              syslog(LOG_ERR, "ERROR: ee24xx_initialize failed: %d\n", ret);
+            }
+          else
+            {
+              syslog(LOG_INFO, "[bringup] eeprom: 24C02 at 0x50 on I2C4 "
+                     "as %s (256 B, 8 B pages)\n", g_eeprom_devname);
+            }
+#endif
         }
     }
   while (0);
@@ -523,6 +674,11 @@ static int board_bringup(void)
     {
       syslog(LOG_ERR, "ERROR: IWDG init failed: %d\n", ret);
     }
+  else
+    {
+      syslog(LOG_INFO, "[bringup] iwdg: /dev/watchdog0 registered "
+             "(stopped, not started)\n");
+    }
 #  endif
 
 #  ifdef CONFIG_STM32_WWDG
@@ -534,6 +690,11 @@ static int board_bringup(void)
   if (ret < 0)
     {
       syslog(LOG_ERR, "ERROR: WWDG init failed: %d\n", ret);
+    }
+  else
+    {
+      syslog(LOG_INFO, "[bringup] wwdg: /dev/watchdog1 registered "
+             "(stopped, not started)\n");
     }
 #  endif
 
