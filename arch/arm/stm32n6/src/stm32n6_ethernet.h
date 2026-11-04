@@ -44,11 +44,24 @@
 
 int stm32n6_ethernet_init(uint8_t *mac_addr);
 
-/**
- * @brief Deinitialize Ethernet GMAC
- * @return 0 on success
- */
+/****************************************************************************
+ * Name: stm32n6_eth_probe
+ *
+ * Description:
+ *   Bring-up step 0 for the GMAC path: configure the ETH1 clock tree and the
+ *   RMII pin mux, pulse the PHY reset, then sweep the MDC divider and the
+ *   five-bit PHY address for a device that answers.
+ *
+ *   Nothing here touches the network stack.  It exists to settle, in one
+ *   flash, the questions that have to be answered before a netdev is worth
+ *   writing: is the clock right, is the pin mux right, is the PHY alive, and
+ *   at which address.
+ *
+ * Returned Value:
+ *   The PHY address that answered, or a negated errno on failure.
+ *
+ ****************************************************************************/
 
-int stm32n6_ethernet_deinit(void);
+int stm32n6_eth_probe(void);
 
 #endif /* __ARCH_ARM_SRC_STM32N6_STM32N6_ETHERNET_H */

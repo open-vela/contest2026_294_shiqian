@@ -347,6 +347,61 @@
   (GPIO_MODE_OUTPUT | GPIO_OTYPE_PP | GPIO_SPEED_LOW | \
    GPIO_PUPD_NONE | GPIO_OUTPUT_CLEAR | GPIO_PORTA | GPIO_PIN(3))
 
+/* Ethernet RMII (YT8512C PHY), pin assignment from the vendor's ETH1
+ * MSP init for this board.  None of these collide with the LTDC pins already
+ * in use (PF8, PF9) or with the LPTIM2/WS2812B pin (PF1).
+ *
+ *   PH5  -> MDC            PF4  -> MDIO
+ *   PF7  -> RMII_REF_CLK   PF10 -> RMII_CRS_DV
+ *   PF11 -> RMII_TX_EN     PF12 -> RMII_TXD0     PF13 -> RMII_TXD1
+ *   PF14 -> RMII_RXD0      PF15 -> RMII_RXD1
+ *
+ * PF5 is the PHY reset line, not the RMII clock output: the vendor's NetXDuo
+ * example deinitialises PF5 from its ETH alternate function and drives it as
+ * a GPIO to reset the PHY, which means the 50 MHz reference clock comes from
+ * an oscillator on the board rather than from the MAC.
+ */
+
+#define GPIO_ETH1_MDC \
+  (GPIO_MODE_AF | GPIO_OTYPE_PP | GPIO_SPEED_HIGH | \
+   GPIO_PUPD_NONE | GPIO_AF(11) | GPIO_PORTH | GPIO_PIN(5))
+
+#define GPIO_ETH1_MDIO \
+  (GPIO_MODE_AF | GPIO_OTYPE_PP | GPIO_SPEED_HIGH | \
+   GPIO_PUPD_NONE | GPIO_AF(11) | GPIO_PORTF | GPIO_PIN(4))
+
+#define GPIO_ETH1_REF_CLK \
+  (GPIO_MODE_AF | GPIO_OTYPE_PP | GPIO_SPEED_HIGH | \
+   GPIO_PUPD_NONE | GPIO_AF(11) | GPIO_PORTF | GPIO_PIN(7))
+
+#define GPIO_ETH1_CRS_DV \
+  (GPIO_MODE_AF | GPIO_OTYPE_PP | GPIO_SPEED_HIGH | \
+   GPIO_PUPD_NONE | GPIO_AF(11) | GPIO_PORTF | GPIO_PIN(10))
+
+#define GPIO_ETH1_TX_EN \
+  (GPIO_MODE_AF | GPIO_OTYPE_PP | GPIO_SPEED_HIGH | \
+   GPIO_PUPD_NONE | GPIO_AF(11) | GPIO_PORTF | GPIO_PIN(11))
+
+#define GPIO_ETH1_TXD0 \
+  (GPIO_MODE_AF | GPIO_OTYPE_PP | GPIO_SPEED_HIGH | \
+   GPIO_PUPD_NONE | GPIO_AF(11) | GPIO_PORTF | GPIO_PIN(12))
+
+#define GPIO_ETH1_TXD1 \
+  (GPIO_MODE_AF | GPIO_OTYPE_PP | GPIO_SPEED_HIGH | \
+   GPIO_PUPD_NONE | GPIO_AF(11) | GPIO_PORTF | GPIO_PIN(13))
+
+#define GPIO_ETH1_RXD0 \
+  (GPIO_MODE_AF | GPIO_OTYPE_PP | GPIO_SPEED_HIGH | \
+   GPIO_PUPD_NONE | GPIO_AF(11) | GPIO_PORTF | GPIO_PIN(14))
+
+#define GPIO_ETH1_RXD1 \
+  (GPIO_MODE_AF | GPIO_OTYPE_PP | GPIO_SPEED_HIGH | \
+   GPIO_PUPD_NONE | GPIO_AF(11) | GPIO_PORTF | GPIO_PIN(15))
+
+#define GPIO_ETH1_PHY_RST \
+  (GPIO_MODE_OUTPUT | GPIO_OTYPE_PP | GPIO_SPEED_LOW | \
+   GPIO_PUPD_NONE | GPIO_OUTPUT_CLEAR | GPIO_PORTF | GPIO_PIN(5))
+
 /****************************************************************************
  * Public Function Prototypes
  ****************************************************************************/

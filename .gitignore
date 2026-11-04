@@ -33,6 +33,9 @@ __pycache__/
 # 调试产物（保留最新固件，其余归档）
 # 参见 SoftwarePackage/rubbish/
 
+# 板上拍照产出的 BMP 样张（相机调试用，不入库；验收时现场生成）
+firmware/photo/
+
 # 预编译库：ATON 链接步骤需要 vendor/lib 下的 .a，它不是构建产物
 !libs/ai_aton/vendor/lib/*.a
 

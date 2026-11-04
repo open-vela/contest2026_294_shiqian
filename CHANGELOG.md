@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.1.0] - 2026-11-04
+
+### 决赛阶段：外设纵向扩充（设备节点 8 → 17）
+
+- **喇叭链路打通（SAI1 + ES8388）**：`stm32n6_sai.c` 从零实现，双播放路径
+  - `eye_cam audio tone <freq> <ms>`：内存合成方波，不依赖任何文件（400 Hz/800 ms 实测 830 ms）
+  - `eye_cam audio <file.wav>`：SD 卡流式播放（8×16 KB 槽位环 + 独立读卡线程），15 s 实测 99.9%~100.1%
+  - **根因是供电域**：`PC2`(SAI1_SCK_A) 属 **VDDIO5** 域，未使能时 MODER/AFR 读回全对但焊盘不动；
+    使能 VDDIO5 后 SAI 立刻工作（详见 `docs/STATUS_2026-11-04.md`）
+  - 同时修正移植层 4 处 VDDIO 位定义错误（VDDIO2/3 的 VRSEL 曾写到只读 RDY 位，VDDIO5 整组错在 `SVMCR1`）
+- **以太网 ETH1 驱动**：Synopsys GMAC5 + RMII + YT8512C；实现 `arm_netinitialize()`，注册 `eth0`
+  - RX `rx=11`（`crcerr=0`）、TX `tx=3`（MMC `txgood=3`）、链路 100 Mbps 全双工
+  - 关键修正：`CCIPR2[18:16]` 是 **PHY 接口类型**（曾误配为 MII），补上 `DMAMR.SWR` 软复位
+  - **端到端 `ping` 未打通**，剩余疑点在接收环的推进/回收（已如实记入「已知限制」）
+- **AP3216C 光感/接近驱动**（I2C4，0x1e）接入 **uORB** 框架，发布 `light` / `proximity` 两个主题
+- **I2C4 成为共享传感器/编解码总线**：同时承载 EEPROM + AP3216C + ES8388
+- **片内外设进产品配置 `eye`**：RTC / ADC1 / 片内温度 DTS / IWDG / WWDG / HASH / EEPROM 24C02
+  - 新增设备节点：`/dev/adc0`、`/dev/temp0`、`/dev/rtc0`、`/dev/watchdog0`、`/dev/watchdog1`、
+    `/dev/eeprom`、`/dev/i2c4`、`/dev/uorb`、`/dev/urandom`
+- **网络协议栈进产品配置**：`CONFIG_NET` + IPv4/TCP/UDP/ICMP/ARP + DHCPC + NSH `netinit`
+- **新增 5 条自检命令**：`sai diag`（时钟链/八源扫描/MCLK/引脚/焊盘/关块对照）、`eth probe`、
+  `audio scan`、`audio tone`、`hw all`
+- **FSBL LRUN 窗口 `0x100000` → `0x110000`**（1 MiB → 1.0625 MiB），固件 1,058,660 B 可正常启动
+- **代码规模**：芯片层 `.c`+`.h` 99 文件/37,057 行 → **100 文件/40,782 行**；板级 2,632 → **4,100 行**
+- **FSBL 镜像**：`fsbl_rifsecfix.hex` 已换成 0x110000 窗口版（md5 `ea968834fd8c`），旧版归档到 `firmware/images/history/fsbl_2026-09-20_1mb.hex`
+- **文档**：新增 `docs/STATUS_2026-11-04.md`、`docs/audio-buzzer.md`（重写）
+
 ## [1.0.0] - 2026-09-20
 
 ### 音频尝试与音调反馈 + 大赛日志归档

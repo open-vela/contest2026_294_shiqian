@@ -30,8 +30,8 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <debug.h>
-
 #include <fixedmath.h>
+#include <syslog.h>
 
 #include <nuttx/kmalloc.h>
 #include <nuttx/mutex.h>
@@ -202,7 +202,17 @@ static int dts_readtemp(FAR struct stm32n6_dts_dev_s *priv, FAR b16_t *temp)
   if ((sample & (DTS_DATAR_SAMPLE_TYPE |
                  DTS_DATAR_SAMPLE_FAULT)) != 0)
     {
-      snerr("ERROR: invalid/fault sample 0x%08" PRIx32 "\n", sample);
+      /* snerr() compiles out when CONFIG_DEBUG_SENSORS is not set, and this
+       * is exactly the failure whose value is needed to diagnose it.  Log
+       * through syslog as well so the bits are always visible.
+       */
+
+      syslog(LOG_ERR, "dts: invalid/fault sample 0x%08lx "
+             "(type=%lu fault=%lu)\n",
+             (unsigned long)sample,
+             (unsigned long)((sample & DTS_DATAR_SAMPLE_TYPE) ? 1 : 0),
+             (unsigned long)((sample & DTS_DATAR_SAMPLE_FAULT) ? 1 : 0));
+
       return -EIO;
     }
 

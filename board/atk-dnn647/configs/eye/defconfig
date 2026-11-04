@@ -134,9 +134,40 @@ CONFIG_EXAMPLES_FSBL_REGRESS=y
 # CONFIG_LV_USE_NUTTX is not set
 # CONFIG_LV_MEM_SIZE_KILOBYTES is not set
 # CONFIG_LV_USE_DEMO_WIDGETS is not set
+# CONFIG_LV_BUILD_EXAMPLES is not set
 # CONFIG_EXAMPLES_LVGLDEMO is not set
 # Camera hardware probe (Phase 6: DCMIPP + IMX335)
 CONFIG_STM32_I2C2=y
+# I2C4 (PE13=SCL / PE14=SDA, AF4): the shared sensor/codec bus.  Carries the
+# onboard 24C02 EEPROM at 0x50, the AP3216C at 0x1e and the ES8388 at 0x10.
+CONFIG_I2C=y
+CONFIG_STM32_I2C4=y
+# 24C02 on I2C4: 256 bytes, 8-byte pages, exposed as /dev/eeprom.
+CONFIG_EEPROM=y
+CONFIG_I2C_EE_24XX=y
+CONFIG_EE24XX_FREQUENCY=400000
+# AP3216C ambient light / proximity / IR on the same I2C4 bus (0x1e).
+# Publishes two uORB topics and logs every I2C transaction, so a wiring or
+# address mistake shows up in the boot log instead of as a missing topic.
+CONFIG_SENSORS=y
+CONFIG_SENSORS_AP3216C=y
+CONFIG_SENSORS_AP3216C_I2C_FREQUENCY=400000
+# On-chip peripherals whose drivers already existed but were only wired into
+# nsh-test.  None of these needs external hardware, so each one turns into a
+# device node the product image can be checked against on the board:
+#   /dev/rtc0      real-time clock
+#   /dev/adc0      ADC1 (internal channels: VREFINT, chip temperature)
+#   /dev/temp0     die temperature sensor
+#   /dev/watchdog0 IWDG, /dev/watchdog1 WWDG
+#   /dev/hash0     HASH accelerator
+CONFIG_RTC=y
+CONFIG_RTC_DRIVER=y
+CONFIG_STM32_RTC=y
+CONFIG_STM32_ADC1=y
+CONFIG_STM32_DTS=y
+CONFIG_STM32_IWDG=y
+CONFIG_STM32_WWDG=y
+CONFIG_STM32_HASH=y
 CONFIG_STM32_CAM_PROBE=y
 # CONFIG_EXAMPLES_CAM_PROBE is not set
 # Camera live-view driver (Phase 6: IMX335 -> DCMIPP -> LTDC framebuffer)
@@ -301,3 +332,24 @@ CONFIG_INPUT_TOUCHSCREEN=y
 CONFIG_STM32_GT9XXX=y
 CONFIG_STM32N6_GT9XXX_INPUT=y
 CONFIG_LV_USE_NUTTX_TOUCHSCREEN=y
+# --- NET stack (ethernet bring-up) ---
+CONFIG_STM32_EMAC=y
+CONFIG_NET=y
+CONFIG_NET_ETHERNET=y
+CONFIG_NET_ETH_PKTSIZE=1518
+CONFIG_NET_IPv4=y
+CONFIG_NET_TCP=y
+CONFIG_NET_UDP=y
+CONFIG_NET_ICMP=y
+CONFIG_NET_ARP=y
+CONFIG_NET_SOCKOPTS=y
+CONFIG_NET_STATISTICS=y
+CONFIG_NSOCKET_DESCRIPTORS=16
+CONFIG_NET_NACTIVESOCKETS=16
+CONFIG_NET_TCP_CONNS=8
+CONFIG_NET_MAX_LISTENPORTS=8
+CONFIG_SCHED_LPWORK=y
+CONFIG_NETUTILS_NETINIT=y
+CONFIG_NETUTILS_DHCPC=y
+CONFIG_NETINIT_DHCPC=y
+CONFIG_NSH_NETINIT=y

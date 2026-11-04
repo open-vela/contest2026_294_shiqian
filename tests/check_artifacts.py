@@ -6,7 +6,7 @@ Verifies, in order of what actually bites:
   1. every image exists and is not a truncated or corrupted copy
      (Intel HEX record checksums, over every line)
   2. the load address declared inside each .hex matches the documented flash map
-  3. nuttx.bin respects the 1 MiB FSBL copy limit
+  3. nuttx.bin respects the FSBL LRUN copy limit (0x110000 = 1.0625 MiB)
 
 A wrong address or a truncated image does not raise anything on the board, it
 just does not start - which is why this runs before flashing rather than after.
@@ -29,7 +29,7 @@ EXPECTED = {
     "eye-data.hex": "0x70400000",
     "face-data.hex": "0x70700000",
 }
-SIZE_LIMIT = 1048576
+SIZE_LIMIT = 0x110000  # EXTMEM_LRUN_SOURCE_SIZE
 
 failures = []
 

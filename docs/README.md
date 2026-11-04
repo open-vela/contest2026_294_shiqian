@@ -9,6 +9,7 @@
 | [lvgl-ui.md](lvgl-ui.md) | 眼控界面设计（页面/动作映射/中文字库/渲染与内存） |
 | [ai-pipeline.md](ai-pipeline.md) | 端侧 AI 链路（数据集 → 训练 → 量化 → NPU 落板） |
 | [audio-buzzer.md](audio-buzzer.md) | 声音反馈（ES8388 排查结论 + 蜂鸣器音调实现） |
+| [STATUS_2026-11-04.md](STATUS_2026-11-04.md) | **决赛阶段状态快照**（初赛→决赛新增、逐外设实测结论、遗留问题） |
 | [eye-control-state-machine.md](eye-control-state-machine.md) | 眼控状态机定义 |
 | [ai-model.md](ai-model.md) | AI 模型规划（早期双轨方案） |
 | [cam-liveview-guide.md](cam-liveview-guide.md) | 摄像头实时预览使用指南 |

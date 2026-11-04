@@ -32,6 +32,7 @@
 
 #include <nuttx/config.h>
 #include <nuttx/kmalloc.h>
+#include <nuttx/sched.h>
 #include <nuttx/semaphore.h>
 #include <syslog.h>
 #include <string.h>
@@ -61,6 +62,7 @@
 
 #define GPDMA_CLBAR_OFFSET     0x00
 #define GPDMA_CCIDCFGR_OFFSET  0x04
+#define GPDMA_CCIDCFGR_OFFSET  0x04
 #define GPDMA_CFCR_OFFSET      0x0C
 #define GPDMA_CSR_OFFSET       0x10
 #define GPDMA_CCR_OFFSET       0x14
@@ -77,6 +79,23 @@
 
 #define GPDMA_GISR_OFFSET      0x00
 #define GPDMA_SECCFGR2_OFFSET  0x24
+
+/* GPDMA_CCIDCFGR (channel CID configuration) bits.  There is no RIMC entry for
+ * GPDMA1 - the thirteen masters RIMC knows about are ETR, NPU, SDMMC1/2,
+ * OTG1/2, ETH1, GPU2D, DMA2D, DCMIPP and LTDC1/2 - so a channel takes its CID
+ * from here and nowhere else.  Left at reset: the vendor SAI1 example does not
+ * touch it either.
+ */
+
+#define GPDMA_CCIDCFGR_CFEN    (1 << 0)   /* CID filtering enable */
+#define GPDMA_CCIDCFGR_SCID(n) ((uint32_t)(n) << 4)  /* static CID */
+
+/* GPDMA global registers.  The channel security and privilege attributes are
+ * one bit per channel here, not in the channel block.
+ */
+
+#define GPDMA_SECCFGR_OFFSET   0x00
+#define GPDMA_PRIVCFGR_OFFSET  0x04
 
 /* GPDMA_CCR (Channel Control) bits */
 
@@ -97,8 +116,10 @@
 
 #define GPDMA_CTR1_SDW_SHIFT   0          /* Source data width (log2 bytes) */
 #define GPDMA_CTR1_SINC        (1 << 3)   /* Source address increment */
+#define GPDMA_CTR1_SSEC        (1u << 15) /* Source security attribute */
 #define GPDMA_CTR1_DDW_SHIFT   16         /* Destination data width (log2) */
 #define GPDMA_CTR1_DINC        (1 << 19)  /* Destination address increment */
+#define GPDMA_CTR1_DSEC        (1u << 31) /* Destination security attribute */
 #define GPDMA_CTR1_DW_WORD     2          /* 32-bit data width */
 
 /* GPDMA_CTR2 (Transfer Register 2) bits.  Per CMSIS the hardware request
@@ -110,6 +131,7 @@
 #define GPDMA_CTR2_REQSEL_MASK (0xff << 0)  /* Hardware request line select */
 #define GPDMA_CTR2_SWREQ       (1 << 9)     /* Software request */
 #define GPDMA_CTR2_DREQ        (1 << 10)    /* Peripheral is destination */
+#define GPDMA_CTR2_PFREQ       (1 << 12)    /* Peripheral flow control */
 #define GPDMA_CTR2_TCEM_MASK   (3 << 30)    /* Transfer complete event mode */
 
 /* GPDMA_CBR1 (Block Register 1) bits */
@@ -154,6 +176,10 @@ static struct stm32n6_dma_priv_s g_dma_channels[16];
  */
 
 static bool g_dma_reported;
+
+/* One shot: what the channel looks like when a block comes back complete. */
+
+static bool g_dma_done_reported;
 
 /****************************************************************************
  * Private Functions
@@ -231,10 +257,29 @@ int stm32n6_dma_init(int channel)
 
   dma_putreg(priv, GPDMA_CCR_OFFSET, 0);
 
+  /* Secure and privileged, both at channel and at transfer level.
+   *
+   * This is the step the vendor's SAI1 example takes and this driver did not:
+   *
+   *   HAL_DMA_ConfigChannelAttributes(&hdma, DMA_CHANNEL_PRIV |
+   *       DMA_CHANNEL_SEC | DMA_CHANNEL_SRC_SEC | DMA_CHANNEL_DEST_SEC);
+   *
+   * SECCFGR and PRIVCFGR are one bit per channel; SSEC and DSEC live in CTR1.
+   * Left unset the channel is non-secure, and a non-secure write into a secure
+   * peripheral is dropped by the RIF while the request line keeps pacing the
+   * channel.  That is precisely how a transfer can complete at exactly the
+   * right rate, from a buffer proven to hold real samples, and still produce
+   * no sound.
+   */
+
+  putreg32(getreg32(priv->base + GPDMA_SECCFGR_OFFSET) | (1u << channel),
+           priv->base + GPDMA_SECCFGR_OFFSET);
+  putreg32(getreg32(priv->base + GPDMA_PRIVCFGR_OFFSET) | (1u << channel),
+           priv->base + GPDMA_PRIVCFGR_OFFSET);
+
   priv->initialized = true;
 
-  syslog(LOG_INFO, "dma: channel %d initialized\n", channel);
-  return 0;
+    return 0;
 }
 
 int stm32n6_dma_start(int channel, uint32_t src, uint32_t dst,
@@ -364,15 +409,22 @@ int stm32n6_dma_start_m2p(int channel, uint32_t maddr, uint32_t paddr,
   priv->block_size = size;
   priv->complete = false;
 
-  /* Clear the channel's status flags.  They are write-1-to-clear and the
-   * previous transfer leaves TCF set, which would make the next poll come
-   * back complete before a single byte has moved.
+  /* Clear the channel's status flags through the flag clear register.
+   *
+   * CSR is status only on this part: writing it does nothing.  Clearing
+   * through CSR left the transfer complete flag of the previous block set,
+   * so every block after the first came back complete before it had moved a
+   * byte, and the caller reconfigured a channel that was still running.
+   * Measured on this board: the first block took ten milliseconds and the
+   * 645 behind it took one, which is 15 s of audio played in 1.1 s.
+   *
+   * The clear bits sit in the same positions as the status bits.
    */
 
-  dma_putreg(priv, GPDMA_CSR_OFFSET, GPDMA_CSR_TCF | GPDMA_CSR_HTF |
-                                   GPDMA_CSR_DTEF | GPDMA_CSR_ULEF |
-                                   GPDMA_CSR_USEF | GPDMA_CSR_TOF |
-                                   GPDMA_CSR_SWREQF);
+  dma_putreg(priv, GPDMA_CFCR_OFFSET, GPDMA_CSR_TCF | GPDMA_CSR_HTF |
+                                       GPDMA_CSR_DTEF | GPDMA_CSR_ULEF |
+                                       GPDMA_CSR_USEF | GPDMA_CSR_TOF |
+                                       GPDMA_CSR_SWREQF);
 
   /* Source = memory (incrementing); destination = peripheral (fixed).  The
    * width is the caller's: the SAI takes one 16-bit sample per transfer,
@@ -382,15 +434,23 @@ int stm32n6_dma_start_m2p(int channel, uint32_t maddr, uint32_t paddr,
   dma_putreg(priv, GPDMA_CTR1_OFFSET,
              ((uint32_t)width << GPDMA_CTR1_SDW_SHIFT) |
              GPDMA_CTR1_SINC |
-             ((uint32_t)width << GPDMA_CTR1_DDW_SHIFT));
+             ((uint32_t)width << GPDMA_CTR1_DDW_SHIFT) |
+             GPDMA_CTR1_SSEC | GPDMA_CTR1_DSEC);
 
   /* Hardware request on the given line, peripheral is the destination (DREQ
    * set, no SWREQ) so the flow is memory-to-peripheral.
+   *
+   * PFREQ is what makes the peripheral pace the channel.  Without it the
+   * channel is in its own flow control: the first request starts it and it
+   * then writes the whole block at bus speed, so a transmit block with an
+   * eight entry FIFO sees the block land in microseconds instead of at the
+   * sample rate.  That was measured on this board: csar advanced the whole
+   * block and cbr1 reached zero while the FIFO still held most of it.
    */
 
   dma_putreg(priv, GPDMA_CTR2_OFFSET,
              ((uint32_t)request & GPDMA_CTR2_REQSEL_MASK) |
-             GPDMA_CTR2_DREQ);
+             GPDMA_CTR2_DREQ | GPDMA_CTR2_PFREQ);
 
   dma_putreg(priv, GPDMA_CSAR_OFFSET, maddr);
   dma_putreg(priv, GPDMA_CDAR_OFFSET, paddr);
@@ -413,20 +473,8 @@ int stm32n6_dma_start_m2p(int channel, uint32_t maddr, uint32_t paddr,
     {
       g_dma_reported = true;
 
-      syslog(LOG_INFO, "dma: ch%d m2p m=%08lx p=%08lx n=%lu req=%u\n",
-             channel, (unsigned long)maddr, (unsigned long)paddr,
-             (unsigned long)size, request);
-
-      syslog(LOG_INFO, "dma: ch%d read back ccr=%08lx ctr1=%08lx ctr2=%08lx "
-             "cbr1=%08lx csar=%08lx cdar=%08lx csr=%08lx\n", channel,
-             (unsigned long)dma_getreg(priv, GPDMA_CCR_OFFSET),
-             (unsigned long)dma_getreg(priv, GPDMA_CTR1_OFFSET),
-             (unsigned long)dma_getreg(priv, GPDMA_CTR2_OFFSET),
-             (unsigned long)dma_getreg(priv, GPDMA_CBR1_OFFSET),
-             (unsigned long)dma_getreg(priv, GPDMA_CSAR_OFFSET),
-             (unsigned long)dma_getreg(priv, GPDMA_CDAR_OFFSET),
-             (unsigned long)dma_getreg(priv, GPDMA_CSR_OFFSET));
-    }
+      
+          }
 
   nxsem_post(&priv->lock);
   return 0;
@@ -462,6 +510,7 @@ int stm32n6_dma_wait(int channel, int timeout_ms)
 
   uint32_t start = clock_systime_ticks();
   uint32_t limit = (uint32_t)MSEC2TICK(timeout_ms);
+  uint32_t slice = 0;
 
   for (;;)
     {
@@ -470,7 +519,37 @@ int stm32n6_dma_wait(int channel, int timeout_ms)
 
       if ((cs & GPDMA_CSR_TCF) != 0 || (cc & GPDMA_CCR_EN) == 0)
         {
+          if (!g_dma_done_reported)
+            {
+              g_dma_done_reported = true;
+
+                          }
+
           return 0;
+        }
+
+      /* Hand the CPU over every so often.
+       *
+       * This loop runs for the whole transfer, which for a 16 KB audio
+       * block is about 93 ms.  Spinning for all of it starved the thread
+       * that reads the next block off the card - it only got the few
+       * milliseconds this thread spent waiting on a semaphore - and that
+       * showed up as six milliseconds of silence per block.  A yield every
+       * few microseconds lets a peer of the same priority run in slices
+       * without delaying the detection of completion by more than that.
+       *
+       * The last few hundred bytes are polled without yielding.  A yield
+       * that lands just as the count reaches zero hands the rest of a slice
+       * to the reader, and the transmit FIFO only holds 181 us of audio, so
+       * that delay alone costs a click.  With 256 bytes left there is still
+       * 1.4 ms of audio queued, which is long enough to keep yielding and
+       * short enough that the hand over is immediate.
+       */
+
+      if (dma_getreg(priv, GPDMA_CBR1_OFFSET) > 256 && ++slice >= 32)
+        {
+          slice = 0;
+          sched_yield();
         }
 
       if ((uint32_t)(clock_systime_ticks() - start) >= limit)
@@ -506,5 +585,4 @@ void stm32n6_dma_deinit(int channel)
   nxsem_destroy(&priv->lock);
   nxsem_destroy(&priv->wait);
 
-  syslog(LOG_INFO, "dma: channel %d deinitialized\n", channel);
-}
+  }

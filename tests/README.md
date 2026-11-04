@@ -4,7 +4,7 @@
 
 | 检查 | 验证什么 |
 |------|----------|
-| `check_artifacts.py` | 4 个烧录镜像：存在、**Intel HEX 行校验和正确**、装载地址与烧录表一致、`nuttx.bin ≤ 1 MiB` |
+| `check_artifacts.py` | 4 个烧录镜像：存在、**Intel HEX 行校验和正确**、装载地址与烧录表一致、`nuttx.bin ≤ 0x110000`（1.0625 MiB，FSBL LRUN 窗口） |
 | `check_dataset.py` | 数据集与文档一致：991 张、五类计数（193/208/196/186/208）、文件名前缀、`meta.txt` 存在 |
 | `check_logs.py` | AI Coding 日志：优先调用官方 `tools/validate-log.py`（需 python ≥ 3.9）；没有新解释器时退回结构检查（字段齐全 / `seq` 单调唯一 / 与 manifest 计数一致） |
 

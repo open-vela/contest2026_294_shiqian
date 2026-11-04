@@ -271,6 +271,13 @@ static int stm32n6_i2c_transfer(
 
   nxsem_wait(&priv->lock);
 
+  /* A stale error from an earlier transfer must not decide the result of this
+   * one: the field is only written on BERR, ARLO and timeout, so without this
+   * it carries whatever happened minutes ago.
+   */
+
+  priv->error = 0;
+
   for (i = 0; i < count; i++)
     {
       struct i2c_msg_s *msg = &msgs[i];
@@ -289,14 +296,46 @@ static int stm32n6_i2c_transfer(
 
       cr2 |= (msg->length << 16) & I2C_CR2_NBYTES_MASK;
 
-      /* Auto-end if last message */
+      /* Auto-end if last message.
+       *
+       * RELOAD was tried here to support I2C_M_NOSTART continuations (the I2C
+       * EEPROM page write) and it broke repeated-start reads: with RELOAD set
+       * the peripheral raises TCR instead of TC and holds SCL, and the second
+       * message of a write-then-read transfer then never completes.  Both the
+       * AP3216C and the EEPROM read path timed out with it in place, so the
+       * original behaviour is kept and combined write transactions remain
+       * unsupported on this port.
+       */
 
       if (i == count - 1)
         {
           cr2 |= I2C_CR2_AUTOEND;
         }
 
-      cr2 |= I2C_CR2_START;
+      /* Start condition, unless this message continues the one before it.
+       *
+       * Several upper halves split one device transaction across two
+       * messages and mark the second I2C_M_NOSTART.  The I2C EEPROM page
+       * write is the canonical case: message 0 carries the memory address
+       * and message 1 carries the data.  Issuing a START for the second
+       * message restarts the transfer, so the slave reads the data bytes as
+       * a fresh memory address and stores nothing -- while every message
+       * still acknowledges, which is why the failure looks like "the write
+       * succeeded but the cell reads back zero".
+       *
+       * A NOSTART on the first message cannot be honoured (there is no
+       * transaction to continue), so it is treated as a normal start.
+       */
+
+      if (i > 0 && (msg->flags & I2C_M_NOSTART))
+        {
+          syslog(LOG_INFO, "i2c: msg %d for addr %02x continues the "
+                 "transfer (NOSTART)\n", i, msg->addr);
+        }
+      else
+        {
+          cr2 |= I2C_CR2_START;
+        }
 
       stm32n6_i2c_putreg(priv, I2C_CR2_OFFSET, cr2);
 
@@ -377,7 +416,19 @@ errout:
   stm32n6_i2c_setfrequency(priv, priv->frequency);
   stm32n6_i2c_putreg(priv, I2C_CR1_OFFSET, I2C_CR1_PE);
   nxsem_post(&priv->lock);
-  return priv->error;
+
+  /* Return what actually went wrong.
+   *
+   * This used to return priv->error, and the no-acknowledge path never sets
+   * that field - it returns -ENXIO straight to the caller of wait_isr.  With
+   * priv->error still zero the transfer therefore reported success after a
+   * NACK, and left the caller's buffer untouched.  That is how a codec that
+   * was not answering came to look like a codec returning zero for every
+   * register: the sentinel value the caller had put in the buffer was what
+   * got printed.
+   */
+
+  return ret < 0 ? ret : (priv->error < 0 ? priv->error : -EIO);
 }
 
 static int stm32n6_i2c_setfrequency(

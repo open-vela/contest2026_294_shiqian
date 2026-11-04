@@ -48,6 +48,7 @@
  *
  * Usage:
  *   eye_cam [iterations] [hold_ms]
+ *   eye_cam preview          the eye-tracking view, no menu in the way
  *
  ****************************************************************************/
 
@@ -85,6 +86,9 @@
 #include <nuttx/aie/ai_engine.h>
 #include <nuttx/aie/stm32n6_aton_aie.h>
 #include <nuttx/video/fb.h>
+#include <nuttx/analog/adc.h>
+#include <nuttx/timers/rtc.h>
+#include <nuttx/timers/watchdog.h>
 
 
 /* Board buzzer: PD3, an active buzzer on a plain pin, driven straight from
@@ -1966,6 +1970,7 @@ typedef enum
 #define EYE_UI_PHOTO_FAILED 3
 
 static int      g_ui_page  = EYE_UI_PAGE_GRID;
+static int      g_ui_start  = EYE_UI_PAGE_GRID;
 static int      g_ui_cells = EYE_UI_COUNT;
 static int      g_led_fd   = -1;
 static uint32_t g_led_state;
@@ -3149,19 +3154,441 @@ static int eye_cam_beep_cmd(int argc, FAR char *argv[])
 #if defined(CONFIG_STM32_SAI1)
 
 extern int stm32n6_audio_play_wav(FAR const char *path);
+extern int stm32n6_audio_init(void);
+extern int stm32n6_sai_output_diag(void);
+extern void stm32n6_audio_dump_codec(void);
+extern int stm32n6_audio_bus_scan(void);
+extern int stm32n6_audio_tone(int freq_hz, int ms);
 
 static int eye_cam_audio_cmd(int argc, FAR char *argv[])
 {
+  int freq;
+  int ms;
+
   if (argc < 3)
     {
       eye_cam_out("eye_cam: usage: eye_cam audio <file.wav>\n");
+      eye_cam_out("       eye_cam audio scan   sweep the codec bus\n");
+      eye_cam_out("       eye_cam audio tone [freq_hz] [ms]   play from RAM\n");
       return 1;
+    }
+
+  /* Bus sweep: says whether the codec answers at all, without needing a
+   * file, and uses the light sensor on the same two wires as the control.
+   */
+
+  if (strcmp(argv[2], "scan") == 0)
+    {
+      return stm32n6_audio_bus_scan() > 0 ? 0 : 1;
+    }
+
+  /* Tone out of RAM: the speaker can be exercised with no card inserted and
+   * no WAV present, which is the state this board is normally in.
+   */
+
+  if (strcmp(argv[2], "tone") == 0)
+    {
+      freq = argc > 3 ? atoi(argv[3]) : 440;
+      ms   = argc > 4 ? atoi(argv[4]) : 500;
+
+      return stm32n6_audio_tone(freq, ms) < 0 ? 1 : 0;
     }
 
   return stm32n6_audio_play_wav(argv[2]) < 0 ? 1 : 0;
 }
 
+/****************************************************************************
+ * Name: eye_cam_sai_cmd
+ *
+ * Description:
+ *   One-shot speaker diagnosis, no panel and no audio file needed.
+ *
+ *   Runs the transmit block through every kernel clock source it has and
+ *   reports which ones make it produce frames, then reads the codec's
+ *   registers back.  Between the two, one run says which side of the link
+ *   is silent: the block that makes the clocks, or the codec that consumes
+ *   them.
+ *
+ ****************************************************************************/
+
+static int eye_cam_sai_cmd(int argc, FAR char *argv[])
+{
+  int diagret;
+  int ret;
+
+  if (argc < 3 || strcmp(argv[2], "diag") != 0)
+    {
+      eye_cam_out("eye_cam: usage: eye_cam sai diag\n");
+      return 1;
+    }
+
+  diagret = stm32n6_sai_output_diag();
+
+  eye_cam_out("sai: transmit block %s\n",
+              diagret < 0 ? "never produced a frame on any clock source" :
+                            "produces frames");
+
+  /* Bring the codec up before reading it back.
+   *
+   * stm32n6_audio_init() is what configures the ES8388 over the bit-banged
+   * I2C and initialises the transmit path; until it runs the codec is
+   * untouched and every register read answers "no answer on the bus", which
+   * says nothing about the codec itself.  Doing it here makes this one
+   * command self-contained.
+   */
+
+  eye_cam_out("codec: bringing the ES8388 up before read back\n");
+
+  ret = stm32n6_audio_init();
+  if (ret < 0)
+    {
+      eye_cam_out("codec: init failed: %d (the read back below will not "
+                  "tell you anything)\n", ret);
+    }
+
+  stm32n6_audio_dump_codec();
+
+  return diagret < 0 ? 1 : 0;
+}
+
 #endif /* CONFIG_STM32_SAI1 */
+
+/****************************************************************************
+ * Name: eye_cam_eth_cmd
+ *
+ * Description:
+ *   GMAC bring-up step 0: clock tree, RMII pin mux, PHY reset, then an MDIO
+ *   sweep.  Needs no network stack, so it can run in the product image
+ *   without dragging the IP stack in behind it.
+ *
+ ****************************************************************************/
+
+extern int stm32n6_eth_probe(void);
+
+static int eye_cam_eth_cmd(int argc, FAR char *argv[])
+{
+  int ret;
+
+  if (argc < 3 || strcmp(argv[2], "probe") != 0)
+    {
+      eye_cam_out("eye_cam: usage: eye_cam eth probe\n");
+      return 1;
+    }
+
+  ret = stm32n6_eth_probe();
+
+  if (ret < 0)
+    {
+      eye_cam_out("eth: no PHY answered\n");
+      return 1;
+    }
+
+  eye_cam_out("eth: PHY answered at address %d\n", ret);
+  return 0;
+}
+
+/****************************************************************************
+ * Peripheral self-test
+ *
+ * Every peripheral added to the product image needs a way to be checked that
+ * does not depend on a shell applet being configured in.  dd and hexdump are
+ * not part of this image, so the checks live here instead and are reachable
+ * from one command.
+ *
+ * All the opens use O_NONBLOCK: a read that would wait for a trigger or for
+ * an interrupt returns -EAGAIN instead of hanging the prompt, which matters
+ * most for the ADC, whose FIFO stays empty until something asks for a
+ * conversion.
+ ****************************************************************************/
+
+#if defined(CONFIG_SENSORS_AP3216C)
+
+/* The uORB topics only publish while a subscriber is attached, so the
+ * self-test reads the sensor directly instead of waiting for one.
+ */
+
+extern int ap3216c_read_now(FAR uint16_t *ir, FAR uint16_t *als,
+                            FAR uint16_t *ps);
+
+static int eye_cam_hw_ap3216c(void)
+{
+  uint16_t ir  = 0;
+  uint16_t als = 0;
+  uint16_t ps  = 0;
+  int ret;
+
+  ret = ap3216c_read_now(&ir, &als, &ps);
+  if (ret < 0)
+    {
+      eye_cam_out("hw ap3216c: read failed: %d\n", ret);
+      return 1;
+    }
+
+  eye_cam_out("hw ap3216c: ir %u, als %u (about %d lux), ps %u (counts, "
+              "not cm)\n",
+              ir, als, (int)(als * 0.35f), ps);
+  return 0;
+}
+
+#endif /* CONFIG_SENSORS_AP3216C */
+
+static int eye_cam_hw_eeprom(void)
+{
+  static const uint8_t pattern[16] =
+  {
+    0x5a, 0xa5, 0x00, 0xff, 0x12, 0x34, 0x56, 0x78,
+    0x9a, 0xbc, 0xde, 0xf0, 0x0f, 0x1e, 0x2d, 0x3c
+  };
+
+  uint8_t back[16];
+  int     fd;
+  int     ret;
+
+  fd = open("/dev/eeprom", O_RDWR | O_NONBLOCK);
+  if (fd < 0)
+    {
+      eye_cam_out("hw eeprom: open failed, errno %d\n", errno);
+      return 1;
+    }
+
+  ret = write(fd, pattern, sizeof(pattern));
+  if (ret != (int)sizeof(pattern))
+    {
+      eye_cam_out("hw eeprom: write returned %d, errno %d\n", ret, errno);
+      close(fd);
+      return 1;
+    }
+
+  if (lseek(fd, 0, SEEK_SET) < 0)
+    {
+      eye_cam_out("hw eeprom: rewind failed, errno %d\n", errno);
+      close(fd);
+      return 1;
+    }
+
+  memset(back, 0, sizeof(back));
+  ret = read(fd, back, sizeof(back));
+  close(fd);
+
+  if (ret != (int)sizeof(back))
+    {
+      eye_cam_out("hw eeprom: read returned %d, errno %d\n", ret, errno);
+      return 1;
+    }
+
+  if (memcmp(pattern, back, sizeof(pattern)) != 0)
+    {
+      eye_cam_out("hw eeprom: MISMATCH wrote %02x %02x %02x %02x, "
+                  "read %02x %02x %02x %02x\n",
+                  pattern[0], pattern[1], pattern[2], pattern[3],
+                  back[0], back[1], back[2], back[3]);
+      return 1;
+    }
+
+  eye_cam_out("hw eeprom: OK, 16 bytes written and read back identical\n");
+  return 0;
+}
+
+static int eye_cam_hw_adc(void)
+{
+  struct adc_msg_s sample[4];
+  ssize_t n;
+  int     fd;
+  int     i;
+
+  fd = open("/dev/adc0", O_RDONLY | O_NONBLOCK);
+  if (fd < 0)
+    {
+      eye_cam_out("hw adc: open failed, errno %d\n", errno);
+      return 1;
+    }
+
+  n = read(fd, sample, sizeof(sample));
+  close(fd);
+
+  if (n <= 0)
+    {
+      eye_cam_out("hw adc: no sample ready (read %d, errno %d); the FIFO "
+                  "stays empty until a conversion is triggered\n",
+                  (int)n, errno);
+      return 1;
+    }
+
+  eye_cam_out("hw adc: %d samples\n", (int)(n / sizeof(sample[0])));
+
+  for (i = 0; i < (int)(n / sizeof(sample[0])); i++)
+    {
+      eye_cam_out("hw adc:   channel %d = %d\n",
+                  sample[i].am_channel, sample[i].am_data);
+    }
+
+  return 0;
+}
+
+static int eye_cam_hw_rtc(void)
+{
+  /* rtc_initialize(0, ...) registers /dev/rtc0, not /dev/rtc.  Try both so a
+   * rename on either side cannot make this check report a missing device
+   * when the RTC is actually fine.
+   */
+
+  static FAR const char *paths[] = { "/dev/rtc0", "/dev/rtc" };
+
+  struct rtc_time rt;
+  int    fd = -1;
+  int    ret;
+  unsigned i;
+
+  for (i = 0; i < sizeof(paths) / sizeof(paths[0]); i++)
+    {
+      fd = open(paths[i], O_RDONLY | O_NONBLOCK);
+      if (fd >= 0)
+        {
+          eye_cam_out("hw rtc: opened %s\n", paths[i]);
+          break;
+        }
+    }
+
+  if (fd < 0)
+    {
+      eye_cam_out("hw rtc: no /dev/rtc0 or /dev/rtc, errno %d\n", errno);
+      return 1;
+    }
+
+  memset(&rt, 0, sizeof(rt));
+  ret = ioctl(fd, RTC_RD_TIME, (unsigned long)(uintptr_t)&rt);
+  close(fd);
+
+  if (ret < 0)
+    {
+      eye_cam_out("hw rtc: RTC_RD_TIME failed, errno %d\n", errno);
+      return 1;
+    }
+
+  eye_cam_out("hw rtc: %04d-%02d-%02d %02d:%02d:%02d\n",
+              rt.tm_year + 1900, rt.tm_mon + 1, rt.tm_mday,
+              rt.tm_hour, rt.tm_min, rt.tm_sec);
+  return 0;
+}
+
+static int eye_cam_hw_temp(void)
+{
+  int32_t value = 0;
+  ssize_t n;
+  int     fd;
+
+  fd = open("/dev/temp0", O_RDONLY | O_NONBLOCK);
+  if (fd < 0)
+    {
+      eye_cam_out("hw temp: open failed, errno %d\n", errno);
+      return 1;
+    }
+
+  n = read(fd, &value, sizeof(value));
+  close(fd);
+
+  if (n != (ssize_t)sizeof(value))
+    {
+      eye_cam_out("hw temp: read returned %d, errno %d\n", (int)n, errno);
+      return 1;
+    }
+
+  eye_cam_out("hw temp: %ld\n", (long)value);
+  return 0;
+}
+
+static int eye_cam_hw_wdt(void)
+{
+  static FAR const char *paths[] = { "/dev/watchdog0", "/dev/watchdog1" };
+  unsigned i;
+  int      failures = 0;
+
+  for (i = 0; i < sizeof(paths) / sizeof(paths[0]); i++)
+    {
+      struct watchdog_status_s status;
+      int fd;
+
+      fd = open(paths[i], O_RDONLY | O_NONBLOCK);
+      if (fd < 0)
+        {
+          eye_cam_out("hw wdt: %s open failed, errno %d\n", paths[i], errno);
+          failures++;
+          continue;
+        }
+
+      /* Read the status but never start the counter: IWDG cannot be stopped
+       * once running and would reset the board mid-test.
+       */
+
+      memset(&status, 0, sizeof(status));
+
+      if (ioctl(fd, WDIOC_GETSTATUS,
+                (unsigned long)(uintptr_t)&status) < 0)
+        {
+          eye_cam_out("hw wdt: %s GETSTATUS failed, errno %d\n",
+                      paths[i], errno);
+          failures++;
+        }
+      else
+        {
+          eye_cam_out("hw wdt: %s ok, timeout %lu ms, %s\n",
+                      paths[i], (unsigned long)status.timeout,
+                      (status.flags & WDFLAGS_ACTIVE) ?
+                        "RUNNING (a previous test started it)" :
+                        "stopped (not started by this test)");
+        }
+
+      close(fd);
+    }
+
+  return failures == 0 ? 0 : 1;
+}
+
+static int eye_cam_hw_cmd(int argc, FAR char *argv[])
+{
+  int failures = 0;
+
+  if (argc < 3)
+    {
+      eye_cam_out("eye_cam: usage: eye_cam hw "
+                  "<eeprom|adc|rtc|temp|wdt|ap3216c|all>\n");
+      return 1;
+    }
+
+  if (strcmp(argv[2], "eeprom") == 0 || strcmp(argv[2], "all") == 0)
+    {
+      failures += eye_cam_hw_eeprom();
+    }
+
+  if (strcmp(argv[2], "adc") == 0 || strcmp(argv[2], "all") == 0)
+    {
+      failures += eye_cam_hw_adc();
+    }
+
+  if (strcmp(argv[2], "rtc") == 0 || strcmp(argv[2], "all") == 0)
+    {
+      failures += eye_cam_hw_rtc();
+    }
+
+  if (strcmp(argv[2], "temp") == 0 || strcmp(argv[2], "all") == 0)
+    {
+      failures += eye_cam_hw_temp();
+    }
+
+  if (strcmp(argv[2], "wdt") == 0 || strcmp(argv[2], "all") == 0)
+    {
+      failures += eye_cam_hw_wdt();
+    }
+
+#if defined(CONFIG_SENSORS_AP3216C)
+  if (strcmp(argv[2], "ap3216c") == 0 || strcmp(argv[2], "all") == 0)
+    {
+      failures += eye_cam_hw_ap3216c();
+    }
+#endif
+
+  return failures == 0 ? 0 : 1;
+}
 
 int main(int argc, FAR char *argv[])
 {
@@ -3208,7 +3635,26 @@ int main(int argc, FAR char *argv[])
     {
       return eye_cam_audio_cmd(argc, argv);
     }
+
+  if (argc >= 2 && strcmp(argv[1], "sai") == 0)
+    {
+      return eye_cam_sai_cmd(argc, argv);
+    }
 #endif
+
+  /* GMAC bring-up step 0, independent of the panel and the audio path. */
+
+  if (argc >= 2 && strcmp(argv[1], "eth") == 0)
+    {
+      return eye_cam_eth_cmd(argc, argv);
+    }
+
+  /* Self-test for the peripherals that have no UI of their own. */
+
+  if (argc >= 2 && strcmp(argv[1], "hw") == 0)
+    {
+      return eye_cam_hw_cmd(argc, argv);
+    }
 
 #if defined(CONFIG_GRAPHICS_LVGL)
   /* Diagnostic entry points: the HyperRAM bring-up lab */
@@ -3259,14 +3705,26 @@ int main(int argc, FAR char *argv[])
    * wants - the fixed one until the detector has placed a crop.
    */
 
-  if (argc > 1)
+  /* eye_cam preview
+   *
+   * Straight into the page the first grid cell opens on a closed-eye confirm,
+   * without having to steer the menu by looking at it.  The menu is driven by
+   * the very classifier that may be the thing under suspicion, so there has to
+   * be a way in that does not depend on it.
+   */
+
+  if (argc > 1 && strcmp(argv[1], "preview") == 0)
+    {
+      g_ui_start = EYE_UI_PAGE_PREVIEW;
+    }
+  else if (argc > 1)
     {
       iters = atoi(argv[1]);
-    }
 
-  if (argc > 2)
-    {
-      hold_ms = atoi(argv[2]);
+      if (argc > 2)
+        {
+          hold_ms = atoi(argv[2]);
+        }
     }
 
   /* eye_cam capture <label> [count]
@@ -3450,6 +3908,13 @@ int main(int argc, FAR char *argv[])
         {
           eye_cam_out("eye_ui: capture -> 0x%08lx, panel on /dev/lcd0\n",
                       (unsigned long)EYE_UI_CAM_ADDR);
+
+          if (g_ui_start != EYE_UI_PAGE_GRID)
+            {
+              eye_cam_out("eye_ui: starting on page %d, ctrl-c to quit\n",
+                          g_ui_start);
+              eye_ui_page_enter(g_ui_start);
+            }
         }
     }
 #endif

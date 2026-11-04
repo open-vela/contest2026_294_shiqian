@@ -4,8 +4,8 @@
 
 | 镜像 | 烧录地址 | 说明 | 字节 | md5（前 12 位） |
 |------|----------|------|------|------------------|
-| `fsbl_rifsecfix.hex` | `0x70000000` | 自定义 FSBL（LRUN + RIF/RISAF），由本仓库源码构建 | 85300 | `032d1ffd3a5c` |
-| `nuttx.bin` | `0x70100000` | NuttX 应用固件（眼控 UI + 双模型） | 948064 | `a60d27014261` |
+| `fsbl_rifsecfix.hex` | `0x70000000` | 自定义 FSBL（LRUN + RIF/RISAF），由本仓库源码构建；**LRUN 窗口 `0x110000`** | 85300 | `ea968834fd8c` |
+| `nuttx.bin` | `0x70100000` | NuttX 应用固件（眼控 UI + 双模型 + 音频/以太网） | 1058660 | `ae21c66f5976` |
 | `eye-data.hex` | `0x70400000` | 眼动五分类模型权重（Intel HEX） | 7975062 | `f8048978ef84` |
 | `face-data.hex` | `0x70700000` | 人脸检测模型权重（Intel HEX） | 300114 | `7b9a44f59176` |
 
@@ -18,8 +18,14 @@ bash firmware/scripts/build_fsbl.sh     # 输出 firmware/build/fsbl.hex（含 I
 ```
 
 自检输出应包含 `byte_sum 校验: OK`、`0x240-0x400 全零: True`、`MSP=0x34200000`、
-`Reset=0x34181E61`；重建结果与仓内镜像 **字节级一致**（md5 `032d1ffd3a5c`，2026-09-20 复核）。
+`Reset=0x34181E61`；重建结果与仓内镜像 **字节级一致**（md5 `ea968834fd8c`，2026-11-03 复核）。
 本镜像包含 LTDC 帧缓冲所需的 **RISAF2/3 窗口**（真机验证 2026-08-12）。
+
+> **LRUN 窗口演进（决赛阶段）**：`EXTMEM_LRUN_SOURCE_SIZE` 已由 `0x100000`（1 MiB）
+> 扩到 **`0x110000`（1.0625 MiB）**，因为决赛版固件涨到 1,058,660 B，超出旧窗口。
+> 旧版 FSBL（md5 `032d1ffd3a5c`）配旧固件仍可用，但**旧 FSBL + 新固件会静默不启动**；
+> 已归档到 `history/fsbl_2026-09-20_1mb.hex` 作为追溯。
+> 源码位置：`firmware/fsbl/Core/Inc/stm32_extmem_conf.h`。
 
 > `history/fsbl_2026-08-08_rifsecfix.hex` 是 8/8 旧版，**不含** RISAF2/3 窗口
 > （烧了屏只会显示顶部约 48 行），仅作追溯留档，**不要烧**。
@@ -56,6 +62,7 @@ bash firmware/scripts/build_fsbl.sh     # 输出 firmware/build/fsbl.hex（含 I
 md5sum firmware/images/nuttx.bin        # 应等于上表
 # 烧录后确认板子起来了：串口应出现
 #   xspi1: HyperRAM armed (...)
+#   [bringup] vddio: 4=1/rdy1(r0) 5=1/rdy1(r0) ...
 #   eye_ui: panel up, 3x2 cells, select 0
 ```
 

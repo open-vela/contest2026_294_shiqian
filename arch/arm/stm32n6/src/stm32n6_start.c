@@ -493,6 +493,23 @@ void __start_c(void)
   modifyreg32(STM32_PWR_SVMCR1, PWR_SVMCR1_VDDIO4VRSEL, 0); /* 3.3V range */
   modifyreg32(STM32_PWR_SVMCR1, 0, PWR_SVMCR1_VDDIO4SV);
 
+  /* VDDIO5 supply-valid (2026-10-28).  AN5967 lists VDDIO5 as the supply for
+   * PC[0], PC[5:2] and PE[4] -- six pins, and PC2 among them is exactly
+   * SAI1_SCK_A.  The vendor's 44_Music_Player calls
+   * HAL_PWREx_EnableVddIO5() + ConfigVddIORange(PWR_VDDIO5, 3V3); the
+   * ethernet demo does not, which is the difference between the two demos'
+   * power setup.
+   *
+   * Without this, PC2 configures perfectly -- MODER reads back 2, AFR reads
+   * back 6 -- and still never drives, because the pad has no supply.  Same
+   * failure shape as VDDIO4 and the SDMMC1 command timeout in 2026-09.
+   *
+   * VDDIO5 lives in SVMCR2, not SVMCR1: bit 8 supply-valid, bit 24 range.
+   */
+
+  modifyreg32(STM32_PWR_SVMCR2, PWR_SVMCR2_VDDIO5VRSEL, 0); /* 3.3V range */
+  modifyreg32(STM32_PWR_SVMCR2, 0, PWR_SVMCR2_VDDIO5SV);
+
   /* Apply the ES0620 I/O-compensation mitigation (write 0x287) to the
    * domains we use.  Only VDDIO2 and VDDIO3 are touched: the other
    * VDDIOxCCCR registers cannot be accessed without their VDDIOxSV bit

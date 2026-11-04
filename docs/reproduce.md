@@ -28,7 +28,7 @@ R=contest2026_294_shiqian
 #      libs/ai_aton                   -> nuttx/libs/ai_aton                （ATON 运行时 + 模型）
 #      app/examples/*                 -> apps/examples/*                   （12 个应用）
 
-# 3. 核心树增量：4 个补丁 / 13 个文件（nuttx 9 · apps 2 · vendor/openvela 1 · LVGL 1）
+# 3. 核心树增量：4 个补丁 / 18 个文件（nuttx 14 · apps 2 · vendor/openvela 1 · LVGL 1）
 #    自动 git apply → 失败三方合并 → 仍失败可用 --overlay 直接覆盖（不依赖上游内容）
 bash $R/scripts/apply-core-tree.sh
 bash $R/scripts/apply-core-tree.sh --check   # 可选：确认 4 个仓都已应用
@@ -46,7 +46,7 @@ bash $R/scripts/apply-core-tree.sh --check   # 可选：确认 4 个仓都已应
 - `apps/graphics/lvgl/lvgl`（1 个）：`src/draw/lv_draw_buf_blur.c` —— MVE 编译门控
   （openvela 选了 `CONFIG_ARM_HAVE_MVE` 但没加 `-march=…+mve`）
 
-> `core-tree-overlay/` 存放这 13 个文件的**补丁后内容**，是补丁的等价兜底：
+> `core-tree-overlay/` 存放这 18 个文件的**补丁后内容**，是补丁的等价兜底：
 > 若上游分支前移导致 `git apply` / 三方合并都失败，`bash $R/scripts/apply-core-tree.sh --overlay`
 > 直接覆盖即可得到同样的树。离线自证：`bash $R/scripts/verify-core-tree.sh`（补丁 ↔ overlay ↔ 当前树 三者一致）。
 

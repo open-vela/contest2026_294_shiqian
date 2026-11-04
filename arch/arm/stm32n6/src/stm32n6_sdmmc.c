@@ -32,6 +32,7 @@
 
 #include <nuttx/config.h>
 #include <nuttx/kmalloc.h>
+#include <nuttx/sched.h>
 #include <nuttx/semaphore.h>
 #include <nuttx/fs/fs.h>
 #include <nuttx/cache.h>
@@ -524,6 +525,18 @@ static int sdmmc_read_block(struct stm32n6_sdmmc_priv_s *priv,
     {
       status = sdmmc_getreg(priv, SDMMC_STA_OFFSET);
 
+      /* Most of this loop is spent waiting for the card, not moving data:
+       * 512 bytes at 25 MHz take 41 us, but the poll runs for a millisecond
+       * or more.  Yielding here lets a peer of the same priority - the audio
+       * feeder - run in between, so this thread no longer monopolises the
+       * CPU for the whole sector while the transmit FIFO drains.
+       */
+
+      if ((timeout & 63) == 0)
+        {
+          sched_yield();
+        }
+
       if (status & SDMMC_STA_RXOVERR)
         {
           return -EIO;
@@ -999,11 +1012,13 @@ int stm32n6_sdmmc_initialize(int bus_num)
 
   syslog(LOG_INFO, "sdmmc%d: card switched to 4-bit (ACMD6 ok)\n", bus_num);
 
+  
   sdmmc_putreg(priv, SDMMC_CLKCR_OFFSET,
                (4 & SDMMC_CLKCR_CLKDIV_MASK) |   /* SDMMC_CK = 200M/(2*4)=25MHz */
                SDMMC_CLKCR_WIDBUS_4BIT |
                SDMMC_CLKCR_HWFC_EN);  /* RM0486 data xfer step 2: HWFC_EN (bare-metal 0x24004) */
 
+  
   priv->initialized = true;
 
   /* ---- RIF grant for SDMMC1 (applied AFTER card init, per bare-metal ----
@@ -1024,13 +1039,7 @@ int stm32n6_sdmmc_initialize(int bus_num)
   modifyreg32(STM32_RIFSC_BASE + 0x14, 0, (1u << 21));  /* SEC21  */
   modifyreg32(STM32_RIFSC_BASE + 0x34, 0, (1u << 21));  /* PRIV21 */
 
-  syslog(LOG_INFO,
-         "sdmmc%d: RIF RIMC[SDMMC1]=0x%08lx RIFSEC=0x%08lx RIFPRIV=0x%08lx\n",
-         bus_num,
-         (unsigned long)getreg32(STM32_RIFSC_BASE + 0xC10 + (2u << 2)),
-         (unsigned long)getreg32(STM32_RIFSC_BASE + 0x14),
-         (unsigned long)getreg32(STM32_RIFSC_BASE + 0x34));
-
+  
   /* Register block device so the VFS can mount FATFS on it. */
 
   ret = register_blockdriver(CONFIG_STM32N6_SDMMC_DEVPATH,

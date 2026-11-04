@@ -281,20 +281,34 @@ static volatile bool     g_aton_traj_reported;
 
 static void aton_traj_str(FAR const char *s)
 {
+#ifdef CONFIG_STM32N6_ATON_VERBOSE
   while (*s != '\0')
     {
       up_putc(*s++);
     }
+#else
+  /* The inference trajectory trace prints a header plus one line per epoch
+   * boundary - about thirty lines of raw console output per run.  Useful when
+   * the runtime is being brought up, pure overhead in a demo.  Build with
+   * CONFIG_STM32N6_ATON_VERBOSE to get it back.
+   */
+
+  (void)s;
+#endif
 }
 
 static void aton_traj_hex(uint32_t v)
 {
+#ifdef CONFIG_STM32N6_ATON_VERBOSE
   int i;
 
   for (i = 28; i >= 0; i -= 4)
     {
       up_putc("0123456789abcdef"[(v >> i) & 0xf]);
     }
+#else
+  (void)v;
+#endif
 }
 
 static void aton_traj_kv(FAR const char *k, uint32_t v)
